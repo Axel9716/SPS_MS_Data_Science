@@ -1,0 +1,289 @@
+---
+title: "Chapter 3: Data Transformation"
+author: "Alex Ptacek"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+# Load Packages
+
+```{r}
+#| label: load-pkg
+#| message: false
+
+library(tidyverse)
+library(nycflights13)
+```
+
+# View Data
+
+## Options for viewing data
+
+```{r}
+#| label: view-data
+
+#shows columns that can fit and first 10 rows
+#width = Inf argument forces remaining columns into next row
+print(flights, width = Inf)
+
+#best for RStudio. Opens whole tibble in new viewer window
+view(flights)
+
+#shows all columns vertically
+glimpse(flights)
+```
+
+# Rows
+
+## Filter - Come back to this
+
+```{r}
+#| label: filter-flights
+
+flights_filter <- flights %>% 
+  filter(dep_delay >= 120, day == 1 |
+           day == 2, month %in% c(1,2)) %>% 
+  filter(dep_delay <= 200) %>% 
+  filter(dep_delay != 260)
+
+print(flights_filter)
+```
+
+## Arrange - Orders
+
+```{r}
+#| label: arrange-flights
+
+#orders rows in columns, in left to right (up/down) priority
+flights_arrange <- flights %>%
+  arrange(          #default order is small to large (ascending), good for dates
+    desc(year),     #orders large to small (descending)
+    desc(month),
+    day, dep_time)
+
+print(flights_arrange)
+```
+
+#Rows and Columns
+
+## Distinct - Find unique values
+
+```{r}
+#| label: distinct-flights
+
+flights_distinct <- flights %>%
+  distinct(         #removes all duplicate rows
+    origin, dest,   #returns unique rows only for entered      variables
+  .keep_all = TRUE) #.keep_all = TRUE keeps all other varables
+
+print(flights_distinct)
+
+#using .keep_all uses the first occurrence of each variable other than the variables in the disctinct argument
+#for this data, this inevitably shows data mostly from January 1st
+```
+
+## Count
+
+```{r}
+#| label: count-flights
+
+#shows count of each unique value in the variables
+flights_count <- flights %>% 
+  count(origin, dest, 
+        sort = TRUE) #sorts in descending order
+
+print(flights_count, n= 5)
+```
+
+# Exercises 1
+
+1.  
+
+```{r}
+#| label: ex-1
+
+flights %>% 
+  filter(dep_delay >= 2)
+
+flights %>% 
+  filter(dest %in% c("IAH", "HOU"))
+
+flights %>% 
+  filter(dep_delay <= 0, arr_delay > 2)
+```
+
+2.  
+
+```{r}
+#| label: ex-2
+
+flights %>% 
+  arrange(desc(dep_delay))
+```
+
+3.  Fastest flight calculation
+
+```{r}
+#| label: fastest-flight
+
+fastest_flights <- flights %>% 
+  arrange(desc((distance/air_time)*60))
+```
+
+4.  
+
+```{r}
+#| label: ex-4
+
+flights %>% 
+  filter(year == 2013) %>% 
+  count(month, day)
+```
+
+# Columns
+
+## Mutate
+
+```{r}
+#| label: mutate-flights
+
+#creates a new column, gain, as a function of other variables
+delay_gain1 <- flights %>% 
+  mutate(gain1 = dep_delay - arr_delay,   #puts column at end by default
+         .before =  3)   #.before = 1 puts new variable before the specified number column
+```
+
+```{r}
+#| label: mutate-copy
+
+delay_gain2 <- flights %>% 
+  mutate(gain2 = dep_delay - arr_delay,
+         .after =  dep_delay,    #.after = x puts new variable after x variable. This works with .before = x too
+         .keep = "used")         #.keep = "used" only keeps the variables used in the mutate argument
+```
+
+## Select
+
+```{r}
+#| label: select-flights
+
+#selects columns
+flights %>% 
+  select(year, month, day)
+
+#selects columns from x to y. Result is same as above
+flights %>% 
+  select(year:day)
+
+#selects the specified variables
+flights %>% 
+  select(!year:day)
+
+#selects tailnum and renames it tail_num
+flights %>% 
+  select(tail_num = tailnum)
+
+#selects variables that are characters
+flights %>% 
+  select(where(is.character))
+```
+
+```{r}
+#| label: more-selects
+
+#other interesting functions. Not case sensitive
+
+flights %>% 
+  select(starts_with("abc"))
+
+flights %>% 
+  select(ends_with("abc"))
+
+flights %>% 
+  select(contains("time", ignore.case = FALSE)) #makes argument case sensitive
+
+#matches x1 x2 and x3... I don't understand
+flights %>% 
+  select(num_range("x", 1:3))
+```
+
+## Rename
+
+```{r}
+#| label: rename-columns
+
+#renames column
+flights %>% 
+  rename(tail_num = tailnum, month_new = month)
+```
+
+## Relocate
+
+```{r}
+#| label: relocate-columns
+
+#relocates to the front by default
+flights %>% 
+  relocate(time_hour, air_time) 
+
+#specify where to move columns
+flights %>% 
+  relocate(year:dep_time, .after = time_hour) 
+```
+
+# Exercises 2
+
+3.  
+
+```{r}
+#| label: ex-3-2
+
+flights %>% 
+  select(starts_with("arr_time"), arr_time)
+```
+
+## 4. `any_of()` Function
+
+Select column names based on a vector
+
+```{r}
+#| label: any-of-test
+
+variables <- c("year", "month", "day", "dep_delay", "arr_delay")
+
+flights %>% 
+  select(any_of(variables))
+```
+
+6.  
+
+```{r}
+#| label: ex-6-2
+
+flights %>% 
+  relocate(air_time_min = air_time)
+```
+
+# Groups
+
+## Grouping multiple variables
+
+```{r}
+#| label: group-multiple
+
+daily <- flights |>  
+  group_by(year, month, day)
+daily
+```
+
+```{r}
+#| label: daily-continued
+
+daily_flights <- daily |> 
+  summarize(
+    n = n(),
+    .groups = "drop_last"
+    )
+```

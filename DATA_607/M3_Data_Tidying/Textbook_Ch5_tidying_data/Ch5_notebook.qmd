@@ -1,0 +1,14 @@
+---
+title: "Chapter 5: Data Tidying"
+author: "Alex Ptacek"
+format: html
+editor: visual
+---
+
+# Tidy Data
+
+# Exercises 1
+
+```{r}
+library(tidyverse)
+```

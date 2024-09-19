@@ -1,0 +1,6 @@
+- source: project
+  quarto-pub:
+    - id: 693b0a05-57c3-4468-b83d-2bf2f6828eb5
+      url: 'https://axel9716.quarto.pub/alex-ptacek-quarto-website'
+    - id: ae188f60-6ad2-4148-8c45-96fe0a7118ef
+      url: 'https://axel9716.quarto.pub/alexs-quarto-website'

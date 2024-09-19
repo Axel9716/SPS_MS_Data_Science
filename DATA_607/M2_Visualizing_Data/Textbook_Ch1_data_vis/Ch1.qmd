@@ -1,0 +1,431 @@
+---
+title: "Chapter 1: Data Visualization"
+author: "Alex Ptacek"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+# Prerequisites
+
+## Load Packages
+
+```{r}
+#| label: load-pkg
+#| message: false
+
+library(tidyverse)
+library(palmerpenguins)
+library(ggthemes)
+```
+
+# First Steps
+
+## The penguins data frame
+
+```{r}
+#| label: view-data
+
+penguins
+
+glimpse(penguins)
+```
+
+# Creating a ggplot
+
+## Simple plot
+
+```{r}
+#| label: empty-plot
+
+ggplot(penguins)        #creates an empty graph that is primed to display penguins data
+```
+
+## Add aesthetics
+
+```{r}
+#| label: add-aes
+
+ggplot(data = penguins,
+       mapping = aes(x = flipper_length_mm, y = body_mass_g))       #maps variables to the x and y axes
+```
+
+## Add a geom
+
+```{r}
+#| label: add-geom
+#| warning: false
+
+ggplot(
+  penguins,
+  aes(x = flipper_length_mm, y = body_mass_g)) +
+  geom_point()                                        #uses a scatterplot to represent our variables
+```
+
+## Add aesthetics and layers
+
+### Color by species
+
+```{r}
+#| label: add-color
+#| warning: false
+
+ggplot(penguins, aes(flipper_length_mm, body_mass_g,
+                     color = species)) +    #adds a new layer of aes, color by species. Also adds a legend
+  geom_point()
+```
+
+### Linear model (Line of best fit)
+
+```{r}
+#| label: add-linear-model
+#| warning: false
+
+ggplot(penguins, aes(flipper_length_mm, body_mass_g,
+                     color = species)) +        #color mapped at the global level
+  geom_point() +
+  geom_smooth(method = "lm")        #adds smooth curve using a linear model
+```
+
+### Mapping aesthetics locally
+
+```{r}
+#| label: geom-local-aes
+#| warning: false
+
+ggplot(penguins, aes(flipper_length_mm, body_mass_g)) +
+  geom_point(aes(color = species)) +        #maps color by species locally, so the next geom won't create lines based on color and species
+  geom_smooth(method = "lm")        #must include "method = "
+```
+
+### Combine shape and color
+
+```{r}
+#| label: shape-species
+#| warning: false
+
+ggplot(penguins, aes(flipper_length_mm, body_mass_g)) +
+  geom_point(aes(color = species, shape = species)) +         #add shape dimension to species, again at local level. Also updates legend
+  geom_smooth(method = "lm")
+```
+
+### Add lables
+
+```{r}
+#| label: add-labels
+#| warning: false
+
+ggplot(penguins, aes(flipper_length_mm, body_mass_g)) +
+  geom_point(aes(color = species, shape = species)) +
+  geom_smooth(method = "lm") +
+  labs(          #add labels to axes, titles, and legend
+    title = "Body Mass and Flipper Length",
+    subtitle = "Dimensions for Adelie, Chinstrap, and Gentoo Penguins",
+    x = "Flipper Length (mm)",
+    y = "Body Mass (g)",
+    color = "Species", shape = "Species")       #must name both the same to same to prevent creating two separate legends
+```
+
+### Add colorblind-safe feature
+
+```{r}
+#| label: add-colorblind-safe
+#| warning: false
+
+ggplot(penguins, aes(flipper_length_mm, body_mass_g)) +
+  geom_point(aes(color = species, shape = species)) +
+  geom_smooth(method = "lm") +
+  labs(title = "Body Mass and Flipper Length",
+    subtitle = "Dimensions for Adelie, Chinstrap, and Gentoo Penguins",
+    x = "Flipper Length (mm)", y = "Body Mass (g)",
+    color = "Species", shape = "Species") +
+  scale_color_colorblind()        #changes our color palette to be colorblind safe
+```
+
+# Exercises 1
+
+1.  There are `r nrow(penguins)` rows and `r ncol(penguins)` columns in the penguins dataframe.
+
+2.  Learn about variables in the penguins package
+
+```{r}
+#| label: pkg-info
+#| eval: false
+
+?penguins
+```
+
+3.  Scatterplot of bill length vs. bill depth. There isn't a clear linear or polynomial regression model that would fit nicely or accurately predict outside data. Instead, there appears to be a few clusters here. A clustering model may be more accurate at predicting outside data.
+
+```{r}
+#| label: scat-exercise
+#| warning: false
+
+penguins %>% 
+  ggplot(aes(bill_length_mm, bill_depth_mm)) +
+  geom_point()
+```
+
+4.  With species on the x-axis, the scatter points only run vertically, showing us the max and min. A boxplot would be a better plot because, in addition to range, it gives us quartile information.
+
+```{r}
+#| label: diff-plot-exercise
+#| warning: false
+
+penguins %>% 
+  ggplot(aes(species, bill_depth_mm)) +
+  geom_point()
+
+penguins %>% 
+  ggplot(aes(species, bill_depth_mm)) +
+  geom_boxplot()
+```
+
+5.  The following gives us an error because it is missing the x and y aesthetics.
+
+```{r}
+#| label: error-test
+#| eval: false
+
+penguins %>% 
+  ggplot() +
+  geom_point()
+```
+
+6.  If you use `na.rm = TRUE` in `geom_point()`, null values will be silently removed. This negates the need for `#| warning: false` and `complete.cases`.
+
+```{r}
+#| label: na.rm-test
+
+penguins %>% 
+  ggplot(aes(bill_length_mm, bill_depth_mm)) +
+  geom_point(na.rm = TRUE)
+```
+
+7.  Add a caption to previous plot.
+
+```{r}
+#| label: add-caption
+
+penguins %>% 
+  ggplot(aes(bill_length_mm, bill_depth_mm)) +
+  geom_point(na.rm = TRUE) +
+  labs(caption = "Data from the palmerpenguins package")
+```
+
+8.  Recreate the visualization.
+
+```{r}
+#| label: recreate-graph
+#| message: false
+
+penguins %>% 
+  ggplot(aes(flipper_length_mm, body_mass_g)) +
+  geom_point(aes(color = bill_depth_mm), na.rm = TRUE) +
+  geom_smooth(na.rm = TRUE)
+```
+
+9.  Visualize code in head then run and compare.
+
+```{r}
+#| label: head-training
+#| message: false
+#| warning: false
+
+ggplot(
+  data = penguins,
+  mapping = aes(x = flipper_length_mm, y = body_mass_g, color = island)
+) +
+  geom_point() +
+  geom_smooth(se = FALSE)
+```
+
+10. The following two plots will be the same because you can map the aesthetics global in `ggplot()` or locally in `geom_x()`.
+
+```{r}
+#| label: syntax-training
+#| warning: false
+#| message: false
+
+ggplot(
+  data = penguins,
+  mapping = aes(x = flipper_length_mm, y = body_mass_g)
+) +
+  geom_point() +
+  geom_smooth()
+
+ggplot() +
+  geom_point(
+    data = penguins,
+    mapping = aes(x = flipper_length_mm, y = body_mass_g)
+  ) +
+  geom_smooth(
+    data = penguins,
+    mapping = aes(x = flipper_length_mm, y = body_mass_g)
+  )
+```
+
+# Visualizing Distributions
+
+## Categorical variable
+
+To visualize the distribution of a categorical variable, you can use a bar chart.
+
+```{r}
+#| label: bar-chart
+
+penguins %>% 
+  ggplot(aes(species)) +
+  geom_bar()
+```
+
+### Order by frequency
+
+```{r}
+#| label: order-bar-chart
+
+penguins %>% 
+  ggplot(aes(
+    fct_infreq(species))) +       #turns the variable to a factor and reorders the levels
+  geom_bar()
+```
+
+## Continuous numerical variable - Histogram
+
+```{r}
+#| label: histogram-chart
+#| warning: false
+
+penguins %>% 
+  ggplot(aes(body_mass_g)) +
+  geom_histogram(binwidth = 200)
+```
+
+## Density plot
+
+```{r}
+#| label: density-plot
+#| warning: false
+
+penguins %>% 
+  ggplot(aes(body_mass_g, color = species, fill = species)) +
+  geom_density(linewidth = 1, alpha = .2)   #alpha makes the color fill transparent
+```
+
+# Exercises 2
+
+1.  Make bar plot of species of penguins with species on the y axis. This makes the bar chart horizontal.
+
+```{r}
+#| label: bar-plot-2
+
+penguins %>% 
+  ggplot(aes(y = species)) +
+  geom_bar()
+```
+
+2.  
+
+```{r}
+#| label: bar-color
+
+ggplot(penguins, aes(x = species)) +
+  geom_bar(color = "red")
+
+ggplot(penguins, aes(x = species)) +
+  geom_bar(fill = "red")
+```
+
+4.  
+
+```{r}
+#| label: diamonds
+
+diamonds %>%
+  ggplot(aes(carat)) +
+  geom_histogram(binwidth = .5)
+```
+
+# Visualizing Relationships
+
+## One numerical and one categorical variable
+
+1.  Box plots
+
+2.  Geom density plots
+
+## Two categorical variables
+
+1.  Stacked bar chart
+
+```{r}
+#| label: stacked-bar
+
+penguins %>% 
+  ggplot(aes(island, fill = species)) +     #fill argument distinguishes the species makeup of each bar by color
+  geom_bar(position = "fill", alpha = .8)   #position = "fill" argument computes the distribution of our fill argument
+```
+
+## Two numerical variables
+
+1.  Scatterplots and regressions
+
+```{r}
+#| label: facet-wrap
+#| warning: false
+
+penguins %>% 
+  ggplot(aes(flipper_length_mm, body_mass_g)) +
+  geom_point(aes(color = species, shape = species)) +
+  facet_wrap(~island)       #creates a 4th variable (island) and creates a graph for each unique value
+```
+
+# Exercises 3
+
+3.  Map a variable to `linewidth`. It doesn't seem to do anything.
+
+```{r}
+#| label: linewidth-variable
+
+mpg %>% 
+  ggplot(aes(hwy, displ, linewidth = cty), linewidth = cty) +
+  geom_point(aes(hwy, displ, linewidth = cty))
+```
+
+5.  Scatterplot with color by species.
+
+```{r}
+#| label: scat-ex
+#| warning: false
+#| message: false
+
+penguins %>% 
+  ggplot(aes(bill_length_mm, bill_depth_mm)) +
+  geom_point(aes(col = species)) +
+  facet_wrap(~island) +
+  geom_smooth(method = 'lm')
+```
+
+7.  Comparing bar charts
+
+```{r}
+#| label: compare-bars
+
+ggplot(penguins, aes(x = island, fill = species)) +
+  geom_bar(position = "fill")
+ggplot(penguins, aes(x = species, fill = island)) +
+  geom_bar(position = "fill", alpha = .7)
+```
+
+# Saving plots
+
+## Using `ggsave(filename = "x")` to save your plots
+
+```{r}
+#| label: save-plot
+
+ggplot(penguins, aes(x = flipper_length_mm, y = body_mass_g)) +
+  geom_point()
+ggsave(filename = "penguin-plot.pdf", units = "px", width = 3000, height = 2500)      #can make filename png or pdf
+```
