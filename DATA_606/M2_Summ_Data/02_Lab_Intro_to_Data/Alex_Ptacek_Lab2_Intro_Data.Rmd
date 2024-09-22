@@ -1,6 +1,6 @@
 ---
 title: "Introduction to data"
-author: ""
+author: "Alex Ptacek"
 output:
   pdf_document: default
   html_document:
@@ -35,6 +35,7 @@ Let's load the packages.
 ```{r load-packages, message=FALSE}
 library(tidyverse)
 library(openintro)
+library(scales)
 ```
 
 ### The data
@@ -122,6 +123,8 @@ ggplot(data = nycflights, aes(x = dep_delay)) +
 
 **Insert your answer here**
 
+*Answer: The smaller the bin, the smaller the bars in the histogram. Both histograms show us there is a right skew to the `dep_delay` distribution. The histogram with binwidth size set to 15 also reveals that there is a range of 15 minutes delay time with a drastically high distribution (>20,000 count), even compared to the neighboring high distribution bins.*
+
 If you want to visualize only on delays of flights headed to Los Angeles, you need to first `filter` the data for flights with that destination (`dest == "LAX"`) and then make a histogram of the departure delays of only those flights.
 
 ```{r lax-flights-hist}
@@ -187,11 +190,52 @@ Note that you can separate the conditions using commas if you want flights that 
 
 **Insert your answer here**
 
+*Answer: There are 68 flights in `nycflights` that headed to SFO in February.*
+
+```{r}
+#| label: create-sfo-feb-df
+
+sfo_feb_flights <- nycflights |> 
+  filter(dest == "SFO", month == 2)
+
+sfo_feb_flights |> count()
+```
+
+
 3.  Describe the distribution of the **arrival** delays of these flights using a 
     histogram and appropriate summary statistics. **Hint:** The summary 
     statistics you use should depend on the shape of the distribution.
     
 **Insert your answer here**
+
+*Answer: `sfo-feb-flights` looks like a right skewed distribution. However, only 4% of flights had >50 minutes of `arr_delay`. Based on the histogram, the mean seems to fall right in the area of highest distribution, so the >50 values may not be having a huge effect. However, based on the comparison between median, mean, and std_dev, the >50 values did possibly have a large effect, because there's a 21% difference between median and mean, an std_dev is quite high. Further investigation may be needed.*
+
+```{r}
+#| label: summarize-sfo-feb-flights
+
+#Create a histogram to examine the distribution of arrival delays
+sfo_feb_flights |> 
+  ggplot(aes(x = arr_delay)) +
+  geom_histogram(binwidth = 10)
+
+#Let's see how much of our data is skewed to the right
+sfo_feb_flights |> 
+  filter(arr_delay > 50) |> 
+  summarise("arr_delay > 50" = n())
+
+#Calculate the percentage of total flights made up of these flights
+percent(3/68)
+
+#Let's see if the differences in mean, std, and median reflect this finding
+sfo_feb_flights |> 
+  summarise(med_arr_delay = median(arr_delay),
+            mean_arr_delay = mean(arr_delay),
+            std_dev = sd(arr_delay))
+
+#Calculate the difference between median and mean
+percent((-11 - -4.5)/(-11 + -4.5)/2)
+```
+
 
 Another useful technique is quickly calculating summary statistics for various groups in your data frame. For example, we can modify the above command using the `group_by` function to get the same summary stats for each origin airport:
 
@@ -209,9 +253,25 @@ Here, we first grouped the data by `origin` and then calculated the summary stat
 
 **Insert your answer here**
 
+*Answer: Delta and United Airlines are tied for the highest variable arrival delays because they have the highest IQR at 22 minutes.*
+
+```{r}
+#| label: summ-sfo-arr-delay
+
+sfo_feb_flights |> 
+  group_by(carrier) |> 
+  summarise(median_arr_delay = median(arr_delay),
+            iqr_arr_delay = IQR(arr_delay),
+            n_flights = n())
+
+```
+
+
 ### Departure delays by month
 
 Which month would you expect to have the highest average delay departing from an NYC airport?
+
+*Answer: I expected November and December to have the highest delays. I was not super surprised that June and July turned out to be at the top, but did not expect November to be the second lowest.*
 
 Let's think about how you could answer this question:
 
@@ -223,7 +283,8 @@ Let's think about how you could answer this question:
 ```{r mean-dep-delay-months}
 nycflights %>%
   group_by(month) %>%
-  summarise(mean_dd = mean(dep_delay)) %>%
+  summarise(mean_dd = mean(dep_delay),
+            median_dd = median(dep_delay)) %>%
   arrange(desc(mean_dd))
 ```
 
@@ -234,6 +295,8 @@ nycflights %>%
     What are the pros and cons of these two choices?
 
 **Insert your answer here**
+
+*Answer: Choosing the lowest mean departure delay means that you're either equally likely to get a very negative delay as a very high delay or an average delay, because those values would average out to a low mean, or you're >50% likely to get an average delay and <50% likely to get a high delay (or low delay), because the more delays around the median means less outliers. Essentially, with just seeing the mean and not the deviation, we don't know how normal the distrubtion is. If the distribution is normal, choosing the lowest mean will give us a 50% chance to get an average or lower delay and 50% chance to get an average or higher delay. If the distribution is skewed, we are >50% likely to get a delay around average. Choosing the lowest median gives you a good chance of getting a low departure delay, because the delays are distributed around the median, meaning the most of the of the values fall around that amount. However, with this method, we don't have any idea what outliers are at play.*
 
 ### On time departure rate for NYC airports
 
@@ -251,6 +314,15 @@ Let's start with classifying each flight as "on time" or "delayed" by creating a
 ```{r dep-type}
 nycflights <- nycflights %>%
   mutate(dep_type = ifelse(dep_delay < 5, "on time", "delayed"))
+
+#personal test
+nycflights_table <- nycflights |> 
+  mutate(dep_type = ifelse(dep_delay < 5, "on_time", "delayed")) |> 
+  group_by(origin, dep_type) |> 
+  summarise(n = n()) |> 
+  pivot_wider(names_from = dep_type, values_from = n) |> 
+  mutate(on_time_rate = percent(on_time/(on_time + delayed), accuracy = .1)) |> 
+  arrange(desc(on_time_rate))
 ```
 
 The first argument in the `mutate` function is the name of the new variable we want to create, in this case `dep_type`. Then if `dep_delay < 5`, we classify the flight as `"on time"` and `"delayed"` if not, i.e. if the flight is delayed for 5 or more minutes.
@@ -272,10 +344,12 @@ You can also visualize the distribution of on on time departure rate across the 
 
 ```{r viz-origin-dep-type}
 ggplot(data = nycflights, aes(x = origin, fill = dep_type)) +
-  geom_bar()
+  geom_bar(position = "fill")
 ```
 
 **Insert your answer here**
+
+*Answer: LGA*
 
 * * *
 
@@ -288,11 +362,30 @@ ggplot(data = nycflights, aes(x = origin, fill = dep_type)) +
     
 **Insert your answer here**
 
+```{r}
+#| label: calc-avg-speed
+
+nycflights <- nycflights |> 
+  mutate(avg_speed = distance/air_time*60)
+```
+
+
 8.  Make a scatterplot of `avg_speed` vs. `distance`. Describe the relationship
     between average speed and distance.
     **Hint:** Use `geom_point()`.
 
 **Insert your answer here**
+
+*Answer: Average speed increases as a square root function of distance. At lower distances, small increases in distance greatly increase average speed, but at higher distances, change in distance has a small effect on average speed.*
+
+```{r}
+#| label: plot-avg-speed-vs-distance
+
+nycflights |> 
+  ggplot(aes(x = distance, y = avg_speed)) +
+  geom_point()
+```
+
 
 9.  Replicate the following plot. **Hint:** The data frame plotted only
     contains flights from American Airlines, Delta Airlines, and United
@@ -304,4 +397,27 @@ ggplot(data = nycflights, aes(x = origin, fill = dep_type)) +
 knitr::include_graphics('Question9Plot.png')
 ```
 
+```{r}
+#| label: question-9-plot
+#| fig-width: 8
+
+nycflights |> 
+  filter(carrier == "UA" | carrier == "DL" | carrier == "AA") |> 
+  ggplot(aes(x = dep_delay, y = arr_delay, color = carrier)) + 
+  geom_point()
+```
+
+
 **Insert your answer here**
+
+*Answer: The cutoff point for departure delays where you can still expect to get to your destination on time is about 60 minutes. We can find this answer more accurately with the following transformations.*
+
+```{r}
+#| label: cutoff-point-delays
+
+nycflights |> 
+  filter(carrier == "UA" | carrier == "DL" | carrier == "AA") |> 
+  filter(arr_delay <= 0) |> 
+  arrange(desc(dep_delay))
+```
+
