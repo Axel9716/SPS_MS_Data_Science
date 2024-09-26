@@ -46,6 +46,7 @@ Your investigation will focus on the performance of one player: [Kobe Bryant](ht
 
 ```{r glimpse-data}
 glimpse(kobe_basket)
+
 ```
 
 This data frame contains 133 observations and 6 variables, where every row records a shot taken by Kobe Bryant. The `shot` variable in this dataset indicates whether the shot was a hit (`H`) or a miss (`M`).
@@ -65,6 +66,8 @@ Within the nine shot attempts, there are six streaks, which are separated by a "
 
 **Insert your answer here**
 
+*Answer: A streak length of 1 means that he had 1 H, hit, followed by a M, miss. A streak length of 0 means he had 1 M preceeded by 0 H's.*
+
 Counting streak lengths manually for all 133 shots would get tedious, so we'll use the custom function `calc_streak` to calculate them, and store the results in a data frame called `kobe_streak` as the `length` variable.
 
 ```{r calc-streak-kobe}
@@ -83,6 +86,18 @@ ggplot(data = kobe_streak, aes(x = length)) +
     baskets? Make sure to include the accompanying plot in your answer.
 
 **Insert your answer here**
+
+*Answer: The distribution of Kobe's streaks is heavily right skewed. Most, almost 40, of his streaks were 0. His longest streak of baskets was 4, only about 1 or 2 times.*
+
+```{r}
+#| label: kobe-streak-distribution
+
+kobe_streak |> 
+  ggplot(aes(x = length)) +
+  geom_bar() +
+  labs(title = "Kobe Shooting Streak Distribution")
+```
+
 
 ## Compared to What?
 
@@ -151,11 +166,24 @@ sim_unfair_coin <- sample(coin_outcomes, size = 100, replace = TRUE,
 
 **Insert your answer here**
 
+*Answer: In my simulation, 25 flips came up heads.*
+
+```{r}
+#| label: sample-unfair-coin
+
+set.seed(606)
+
+sim_unfair_coin <- sample(coin_outcomes, size = 100, replace = TRUE,
+                          prob = c(0.2, 0.8))
+table(sim_unfair_coin)
+```
+
+
 <div id="boxedtext">
 **A note on setting a seed:** Setting a seed will cause R to select the same sample each time you knit your document. This will make sure your results don't change each time you knit, and it will also ensure reproducibility of your work (by setting the same seed it will be possible to reproduce your results). You can set a seed like this:
 
 ```{r set-seed}
-set.seed(35797)                 # make sure to change the seed
+set.seed(606)                 # make sure to change the seed
 ```
 
 The number above is completely arbitraty. If you need inspiration, you can use your ID, birthday, or just a random string of numbers. The important thing is that you use each seed only once in a document. Remember to do this **before** you sample in the exercise above.
@@ -187,6 +215,16 @@ To make a valid comparison between Kobe and your simulated independent shooter, 
 
 **Insert your answer here**
 
+*Answer:*
+
+```{r}
+#| label: sim-kobe-shooting-percentage
+
+sim_basket <- sample(shot_outcomes, size = 133, replace = TRUE,
+                     prob = c(.45, .55))
+```
+
+
 Note that we've named the new vector `sim_basket`, the same name that we gave to the previous vector reflecting a shooting percentage of 50%. In this situation, R overwrites the old object with the new one, so always make sure that you don't need the information in an old vector before reassigning its name.
 
 With the results of the simulation saved as `sim_basket`, you have the data necessary to compare Kobe to our independent shooter.
@@ -204,12 +242,31 @@ Both data sets represent the results of 133 shot attempts, each with the same sh
 
 **Insert your answer here**
 
+*Answer:*
+
+```{r}
+#| label: calc-sim-streak
+
+sim_streak <- calc_streak(sim_basket)
+```
+
+
 6.  Describe the distribution of streak lengths. What is the typical streak 
     length for this simulated independent shooter with a 45% shooting percentage?
     How long is the player's longest streak of baskets in 133 shots? Make sure
     to include a plot in your answer.
 
 **Insert your answer here**
+
+*Answer: The distribution of `sim_streak` lengths is right skewed. Most of the streak lengths are 0 or 1, at counts of about 33 and 27 respectively. The longest streak is 4 at a count of about 3.*
+
+```{r}
+sim_streak |> 
+  ggplot(aes(x = length)) +
+  geom_bar() +
+  labs(title = "Simulation Shooting Streak Distribution")
+```
+
 
 7.  If you were to run the simulation of the independent shooter a second time, 
     how would you expect its streak distribution to compare to the distribution 
@@ -218,11 +275,15 @@ Both data sets represent the results of 133 shot attempts, each with the same sh
 
 **Insert your answer here**
 
+*Answer: I would expect the new simulation to be similar to the original one. The probability of missing is 55% and hitting one basket (length = 1) is 45%, hitting 2 in a row is 20%, 3 in a row is 9%, 4 in a row is 4%. Therefore, we can reasonably expect the distribution to be right skewed. However, it is not guaranteed. It is also to possible to have a bimodal distribution with peaks of 0 and 5, or even 133 0's or 1 133 count, though the latter examples are extremely unlikely.*
+
 8.  How does Kobe Bryant's distribution of streak lengths compare to the 
     distribution of streak lengths for the simulated shooter? Using this 
     comparison, do you have evidence that the hot hand model fits Kobe's 
     shooting patterns? Explain.
 
 **Insert your answer here**
+
+*Answer: Kobe's streak distribution is fairly similar to the the simulation streak distribution. This is evidence that the hot hand model does not fit Kobe's shooting patterns, because this comparison shows the Kobe's shooting pattern was similar to that of a simulation of an independent 45% shooter, his average. If he had a "hot hand", I would expect his streak distribution to be less right skewed.*
 
 * * *
