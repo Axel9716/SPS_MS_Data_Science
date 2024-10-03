@@ -2,7 +2,6 @@
 title: "The normal distribution"
 author: "Alex Ptacek"
 output:
-  pdf_document: default
   html_document:
     includes:
       in_header: header.html
@@ -11,6 +10,7 @@ output:
     theme: cerulean
     toc: true
     toc_float: true
+  pdf_document: default
 editor_options: 
   chunk_output_type: console
 ---
@@ -33,6 +33,8 @@ Let's load the packages.
 ```{r load-packages, message=FALSE}
 library(tidyverse)
 library(openintro)
+library(ggpubr)
+library(cowplot)
 ```
 
 ### The data
@@ -54,7 +56,7 @@ You'll be focusing on just three columns to get started: restaurant, calories, c
 
 Let's first focus on just products from McDonalds and Dairy Queen.
 
-```{r}
+```{r create-restaurant-df}
 mcdonalds <- fastfood %>%
   filter(restaurant == "Mcdonalds")
 dairy_queen <- fastfood %>%
@@ -65,6 +67,18 @@ dairy_queen <- fastfood %>%
 
 **Insert your answer here**
 
+*Answer: Both distributions are unimodal and peak when `cal_fat` is about 150-200. The Dairy Queen distribution looks nearly normal and seems to have a somewhat low standard deviation, while Mcdonalds is very right skewed.*
+
+```{r cal-fat-distribution}
+fastfood |> 
+  filter(restaurant == "Mcdonalds" |
+           restaurant == "Dairy Queen") |> 
+ggplot(aes(x = cal_fat, fill = restaurant)) +
+  geom_histogram(binwidth = 80) +
+  facet_wrap(~restaurant)
+```
+
+
 ## The normal distribution
 
 In your description of the distributions, did you use words like *bell-shaped*or *normal*?  It's tempting to say so when faced with a unimodal symmetric distribution.
@@ -72,18 +86,22 @@ In your description of the distributions, did you use words like *bell-shaped*or
 To see how accurate that description is, you can plot a normal distribution curve on top of a histogram to see how closely the data follow a normal distribution. This normal curve should have the same mean and standard deviation as the data. You'll be focusing on calories from fat from Dairy Queen products, so let's store them as a separate object and then calculate some statistics that will be referenced 
 later. 
 
-```{r}
+```{r calc-dq-summ-stats}
 dqmean <- mean(dairy_queen$cal_fat)
 dqsd   <- sd(dairy_queen$cal_fat)
 ```
 
 Next, you make a density histogram to use as the backdrop and use the `lines` function to overlay a normal probability curve. The difference between a frequency histogram and a density histogram is that while in a frequency histogram the *heights* of the bars add up to the total number of observations, in a density histogram the *areas* of the bars add up to 1. The area of each bar can be calculated as simply the height *times* the width of the bar. Using a density histogram allows us to properly overlay a normal distribution curve over the histogram since the curve is a normal probability density function that also has area under the curve of 1. Frequency and density histograms both display the same exact shape; they only differ in their y-axis. You can verify this by comparing the frequency histogram you constructed earlier and the density histogram created by the commands below.
 
-```{r}
-ggplot(data = dairy_queen, aes(x = cal_fat)) +
+```{r overlay-dnorm-on-hist}
+dplot30 <- ggplot(data = dairy_queen, aes(x = cal_fat)) +
         geom_blank() +
-        geom_histogram(aes(y = ..density..)) +
+  
+# I changed ..density.. to after_stat(density) as instructed by R
+# because dot-dot notation has apparently been depreciated
+        geom_histogram(aes(y = after_stat(density))) +
         stat_function(fun = dnorm, args = c(mean = dqmean, sd = dqsd), col = "tomato")
+dplot30
 ```
 
 After initializing a blank plot with `geom_blank()`, the `ggplot2` package (within the `tidyverse`) allows us to add additional layers. The first layer is a density histogram. The second layer is a statistical function -- the density of the normal curve, `dnorm`. We specify that we want the curve to have the same mean and standard deviation as the column of fat calories. The argument `col` simply sets the color for the line to be drawn. If we left it out, the line would be drawn in black.
@@ -93,16 +111,34 @@ After initializing a blank plot with `geom_blank()`, the `ggplot2` package (with
 
 **Insert your answer here**
 
+*Answer: It depends. At the default binwidth of 30, the distribution looks far from normal. However, when I plug in binwidth = 80, the distribution looks nearly normal.*
+
+```{r plot-80-bins, echo=FALSE, results='hide'}
+dplot80 <- ggplot(data = dairy_queen, aes(x = cal_fat)) +
+        geom_blank() +
+        geom_histogram(aes(y = after_stat(density)), binwidth = 80) +
+        stat_function(fun = dnorm, args = c(mean = dqmean, sd = dqsd), col = "salmon")
+```
+
+```{r arrange-dens-plots, echo=FALSE}
+ggarrange(dplot30, dplot80)
+```
+
+
 ## Evaluating the normal distribution
 
 Eyeballing the shape of the histogram is one way to determine if the data appear to be nearly normally distributed, but it can be frustrating to decide just how close the histogram is to the curve. An alternative approach involves constructing a normal probability plot, also called a normal Q-Q plot for "quantile-quantile".
 
-```{r}
-ggplot(data = dairy_queen, aes(sample = cal_fat)) + 
-  geom_line(stat = "qq")
+```{r qq-plot-dq}
+dq_qq <- ggplot(data = dairy_queen, aes(sample = cal_fat)) + 
+  geom_line(stat = "qq") +
+  geom_qq() +
+  geom_qq_line() +
+  theme(panel.grid.major.x = element_blank())
+dq_qq
 ```
 
-This time, you can use the `geom_line()` layer, while specifying that you will be creating a Q-Q plot with the `stat` argument. It's important to note that here, instead of using `x` instead `aes()`, you need to use `sample`.
+This time, you can use the `geom_line()` layer, while specifying that you will be creating a Q-Q plot with the `stat` argument. It's important to note that here, instead of using `x` inside `aes()`, you need to use `sample`.
 
 The x-axis values correspond to the quantiles of a theoretically normal curve with mean 0 and standard deviation 1 (i.e., the standard normal distribution).  The y-axis values correspond to the quantiles of the original unstandardized sample data. However, even if we were to standardize the sample data values, the Q-Q plot would look identical. A data set that is nearly normal will result in a probability plot where the points closely follow a diagonal line.  Any deviations from normality leads to deviations of these points from that line.
 
@@ -110,7 +146,8 @@ The plot for Dairy Queen's calories from fat shows points that tend to follow th
 
 A useful way to address this question is to rephrase it as: what do probability plots look like for data that I *know* came from a normal distribution?  We can answer this by simulating data from a normal distribution using `rnorm`.
 
-```{r}
+```{r set-seed-and-sim-norm}
+set.seed(606)
 sim_norm <- rnorm(n = nrow(dairy_queen), mean = dqmean, sd = dqsd)
 ```
 
@@ -119,6 +156,25 @@ The first argument indicates how many numbers you'd like to generate, which we s
 3.  Make a normal probability plot of `sim_norm`.  Do all of the points fall on the line?  How does this plot compare to the probability plot for the real data? (Since `sim_norm` is not a data frame, it can be put directly into the `sample` argument and the `data` argument can be dropped.)
 
 **Insert your answer here**
+
+*Answer: The normal probability plot for `sim_norm` also has some deviation from the normal line, especially at the lower tail. However, the real data from Dairy Queen has much more noticeable deviation from the normal line.*
+
+```{r plot-sim-qq}
+
+sim_norm_qq <- ggplot(mapping = aes(sample = sim_norm)) +
+  geom_line(stat = "qq") +
+  geom_qq() +
+  geom_qq_line() +
+  theme(panel.grid.major.x = element_blank())
+
+ggdraw() + 
+  draw_plot(dq_qq, x = 0, y = 0, width = .5, height = .92) +
+  draw_plot(sim_norm_qq, x = .5, y = 0, width = .5, height = .92) +
+  draw_plot_label(label = c("Dairy Queen", "Simulation"), size = 19, 
+                            x = c(-.03, .48), y = c(1, 1))
+ 
+```
+
 
 Even better than comparing the original plot to a single plot generated from a normal distribution is to compare it to many more plots using the following function. It shows the Q-Q plot corresponding to the original data in the top left corner, and the Q-Q plots of 8 different simulated normal data.  It may be helpful to click the zoom button in the plot window.
 
@@ -136,6 +192,11 @@ qqnormsim(sample = cal_fat, data = dairy_queen)
     menu appear to come from a normal distribution.
 
 **Insert your answer here**
+
+```{r}
+qqnormsim(sample = cal_fat, data = mcdonalds)
+```
+
 
 ## Normal probabilities
 
