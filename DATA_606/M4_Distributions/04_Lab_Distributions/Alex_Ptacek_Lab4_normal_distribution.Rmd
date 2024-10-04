@@ -2,6 +2,7 @@
 title: "The normal distribution"
 author: "Alex Ptacek"
 output:
+  pdf_document: default
   html_document:
     includes:
       in_header: header.html
@@ -10,7 +11,6 @@ output:
     theme: cerulean
     toc: true
     toc_float: true
-  pdf_document: default
 editor_options: 
   chunk_output_type: console
 ---
@@ -35,6 +35,7 @@ library(tidyverse)
 library(openintro)
 library(ggpubr)
 library(cowplot)
+library(patchwork)
 ```
 
 ### The data
@@ -120,7 +121,7 @@ dplot80 <- ggplot(data = dairy_queen, aes(x = cal_fat)) +
         stat_function(fun = dnorm, args = c(mean = dqmean, sd = dqsd), col = "salmon")
 ```
 
-```{r arrange-dens-plots, echo=FALSE}
+```{r arrange-dens-plots, echo=FALSE, message=FALSE}
 ggarrange(dplot30, dplot80)
 ```
 
@@ -179,7 +180,8 @@ ggdraw() +
 Even better than comparing the original plot to a single plot generated from a normal distribution is to compare it to many more plots using the following function. It shows the Q-Q plot corresponding to the original data in the top left corner, and the Q-Q plots of 8 different simulated normal data.  It may be helpful to click the zoom button in the plot window.
 
 ```{r}
-qqnormsim(sample = cal_fat, data = dairy_queen)
+qqnormsim(sample = cal_fat, data = dairy_queen) +
+  geom_qq_line()
 ```
 
 4.  Does the normal probability plot for the calories from fat look similar to the plots 
@@ -188,13 +190,18 @@ qqnormsim(sample = cal_fat, data = dairy_queen)
 
 **Insert your answer here**
 
+*Answer: I think the plots do not provide sufficient evidence that Dairy Queen's `cal_fat` is normally distributed. Compared to the simulation plots, the real data seems to have significantly higher deviation around the tails (in this case, the upper tail).*
+
 5.  Using the same technique, determine whether or not the calories from McDonald's
     menu appear to come from a normal distribution.
 
 **Insert your answer here**
 
-```{r}
-qqnormsim(sample = cal_fat, data = mcdonalds)
+*Answer: I think the McDonald's `cal_fat` data is also not normally distributed. Similar to Dairy Queen, the upper tail of the real data is more significantly deviated from the normal line than the simulation data.*
+
+```{r qqsim-mcd-cal-fat}
+qqnormsim(sample = cal_fat, data = mcdonalds) +
+  geom_qq_line()
 ```
 
 
@@ -226,6 +233,39 @@ Although the probabilities are not exactly the same, they are reasonably close. 
 
 **Insert your answer here**
 
+*Answer: The theoretical normal distribution of of McDonald's `calories` is closer to the empirical distribution than that of Dairy Queen's `trans_fat`.*
+
+**Question 1: Probability that a McDonald's item has more than 1000 calories.**
+
+```{r mcd_cal_pnorm}
+mcd_mean = mean(mcdonalds$calories)
+mcd_sd = sd(mcdonalds$calories)
+
+1 - pnorm(1000, mean = mcd_mean, sd = mcd_sd)
+```
+
+```{r mcd_cal_empirical}
+mcdonalds |> 
+  filter(calories > 1000) |> 
+  summarise(probability = n() / nrow(mcdonalds))
+```
+
+
+**Question 2: Probability that a Dairy Queen item has no more than 1 trans fat.**
+
+```{r dq_fat_pnorm}
+dq_fat_mean = mean(dairy_queen$trans_fat)
+dq_fat_sd = sd(dairy_queen$trans_fat)
+
+pnorm(1, mean = dq_fat_mean, sd = dq_fat_sd)
+```
+
+```{r dq_fat_empirical}
+dairy_queen |> 
+  filter(trans_fat <= 1) |> 
+  summarise(probability = n() / nrow(dairy_queen))
+```
+
 * * *
 
 ## More Practice
@@ -234,12 +274,96 @@ Although the probabilities are not exactly the same, they are reasonably close. 
    
 **Insert your answer here**
 
+*Answer: Out of all the restaurants, Burger King's sodium distribution is the closest to normal.*
+
+**1. Comparing the sodium distributions by restaurant, Burger King stands out as the most normal looking distribution.**
+
+```{r sodium-histogram-all-restaurants}
+fastfood |> 
+  ggplot(aes(x = sodium)) +
+  geom_histogram(binwidth = 150) +
+  facet_wrap(~restaurant, scales = 'free')
+```
+
+**2. Based on the Q-Q plots, Burger King, Taco Bell, and Arby's seem to have similarly normal distributions**
+
+```{r sodium-qq-all-restaurants}
+fastfood  |> 
+  ggplot(aes(sample = sodium)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_wrap(~restaurant, scales = 'free_y')
+```
+
+**3. Using the results of both tests, Burger King's sodium distribution seems like the closest to normal.**
+
+```{r top-3-comparison, echo=FALSE}
+sodium_hist <- fastfood |> 
+  filter(restaurant %in% c("Burger King", "Taco Bell", "Arbys")) |> 
+  ggplot(aes(x = sodium)) +
+  geom_histogram(binwidth = 150) +
+  facet_wrap(~restaurant, scales = 'free', nrow = 1)
+
+sodium_qq <- fastfood |> 
+  filter(restaurant %in% c("Burger King", "Taco Bell", "Arbys")) |> 
+  ggplot(aes(sample = sodium)) +
+  geom_qq() +
+  geom_qq_line() +
+  facet_wrap(~restaurant, scales = 'free_y')
+
+ggarrange(sodium_qq, sodium_hist, nrow = 2)
+```
+
+
+
 8.  Note that some of the normal probability plots for sodium distributions seem to have a stepwise pattern. why do you think this might be the case?
 
 **Insert your answer here**
 
+*Answer: The horizontal line shapes in the Q-Q plot indicate that there are repeats of exact sodium amounts, and the stepwise pattern is the result of some of these repeated numbers being close together, resembling a staircase. If we filter the data to the 10 most repeating sodium values and plot this as a Q-Q plot, the pattern is much easier to see. The graph below highlights that the most recurring sodium value, 1120, creates a "stair" with the most values. This pattern can also be an indicator of some inliers, but more domain knowledge would be needed here.*
+
+```{r sodium-table-qq-patch, echo=FALSE}
+top_sodium_counts <- fastfood |> 
+  group_by(sodium) |> 
+  count() |> 
+  arrange(desc(n)) |> 
+  rename(Sodium = sodium, Count = n) |> 
+  head(n = 10) |> 
+  pivot_wider(names_from = Sodium, values_from = Count) |> 
+  mutate(Sodium = "Count", .before = 1) 
+
+
+top_sodium_qq <- fastfood |> 
+  filter(sodium %in% colnames(top_sodium_counts)) |> 
+  ggplot(aes(sample = sodium)) +
+  geom_qq() +
+  geom_line(stat = "qq") +
+  geom_qq_line() +
+  geom_point(mapping = aes(x = 1.01, y = 1120), color = "brown1", shape = 1, size = 19)
+
+
+top_sodium_qq / wrap_table(top_sodium_counts, space = "fixed")
+```
+
+
 9.  As you can see, normal probability plots can be used both to assess normality and visualize skewness.  Make a normal probability plot for the total carbohydrates from a restaurant of your choice.  Based on this normal probability plot, is this variable left skewed, symmetric, or right skewed? Use a histogram to confirm your findings.
 
 **Insert your answer here**
+
+*Based on the Q-Q plot McDonald's `total_carb` is right skewed, because the upper tail is noticeably deviated from the normal line. The histogram confirms this.*
+
+```{r mcd_carb_plots}
+mcd_carb_qq <- mcdonalds |> 
+  ggplot(aes(sample = total_carb)) +
+  geom_qq() +
+  geom_qq_line()
+
+mcd_carb_hist <- mcdonalds |> 
+  ggplot(aes(x = total_carb)) +
+  geom_histogram(binwidth = 10)
+
+ggarrange(mcd_carb_qq, mcd_carb_hist)
+```
+
 
 * * *
