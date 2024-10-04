@@ -1,0 +1,3 @@
+# Module 6: Working with Text and Strings
+
+Just Lab 5 so far...
