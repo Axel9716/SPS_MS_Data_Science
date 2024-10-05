@@ -1,31 +1,41 @@
 ---
 title: "Lab 5: Working with Text and Strings "
-format: html
+author: "Alex Ptacek"
+format: pdf
 editor: source
+editor_options: 
+  chunk_output_type: console
 ---
 
 # Overview
 
-In this lab you will practice perform a series of exercises that use text and string manipulation to either analyze data with text, manipulate data containing strings, apply
-regular expressions, or handle data files with unusual formats or text strings.
+In this lab you will practice perform a series of exercises that use text and string manipulation to either analyze data with text, manipulate data containing strings, apply regular expressions, or handle data files with unusual formats or text strings.
 
 ## Problems
 
+**Problem 1.** Using the 173 majors listed in fivethirtyeight.com’s [College Majors dataset](https://fivethirtyeight.com/features/the-economic-guide-to-picking-a-college-major/), provide code that identifies the majors that contain either "DATA" or "STATISTICS", case insensitive. You can find this dataset on R by installing the package `fivethirtyeight` and using the `major` column in either `college_recent_grades`, `college_new_grads`, or `college_all_ages`.
 
-**Problem 1.** Using the 173 majors listed in fivethirtyeight.com’s 
-[College Majors dataset](https://fivethirtyeight.com/features/the-economic-guide-to-picking-a-college-major/), provide code that identifies the majors that contain either "DATA" or "STATISTICS", case insensitive.
-You can find this dataset on R by installing the package `fivethirtyeight` and using the `major` column in either `college_recent_grades`, `college_new_grads`, or `college_all_ages`.
+```{r load-pkg, message=FALSE}
+library(tidyverse)
+library(fivethirtyeight)
+```
+
+```{r}
+college_df <- tibble(college_all_ages)
+
+str_view(college_df$major, regex("data|statistics", ignore_case = TRUE))
+```
 
 **Problem 2** Write code that transforms the data below:
 
-` [1] "bell pepper" "bilberry" "blackberry" "blood orange" `\
-` [5] "blueberry" "cantaloupe" "chili pepper" "cloudberry" `\
-` [9] "elderberry" "lime" "lychee" "mulberry" `\
-` [13] "olive"  "salal berry" `\
+`[1] "bell pepper" "bilberry" "blackberry" "blood orange"`\
+`[5] "blueberry" "cantaloupe" "chili pepper" "cloudberry"`\
+`[9] "elderberry" "lime" "lychee" "mulberry"`\
+`[13] "olive"  "salal berry"`\
 
 Into a format like this:
 
-` c("bell pepper", "bilberry", "blackberry", "blood orange", "blueberry", "cantaloupe", "chili pepper", "cloudberry", "elderberry", "lime", "lychee", "mulberry", "olive", "salal berry") `
+`c("bell pepper", "bilberry", "blackberry", "blood orange", "blueberry", "cantaloupe", "chili pepper", "cloudberry", "elderberry", "lime", "lychee", "mulberry", "olive", "salal berry")`
 
 As your starting point take the string defined in the following code chunk:
 
@@ -36,35 +46,93 @@ messyString = ' [1] "bell pepper" "bilberry" "blackberry" "blood orange" \n
  [13] "olive"  "salal berry" '
 ```
 
+```{r}
+food <- regex(r"(
+                     [a-z]+   #any word
+                     \ ?      #optional space
+                     [a-z]*   #optional second word
+                      )",
+                     comments = TRUE)
+
+str_extract_all(messyString, food, simplify = TRUE)
+```
+
 Hint: There are many different ways to solve this problem, but if you use `str_extract_all` a helpful flag that returns a character vector instead of a list is `simplify=TRUE`. Then you can apply other tools from `stringr` if needed.
 
+**Problem 3** Describe, in words, what these regular expressions will match. Read carefully to see if each entry is a regular expression or a string that defines a regular expression.
 
+-   `^.*$`\
+-   `"\\{.+\\}"`
+-   `\d{4}-\d{2}-\d{2}`
+-   `"\\\\{4}"`
+-   `"(..)\\1"`
 
-**Problem 3** Describe, in words, what these regular expressions will match. Read carefully to see if each entry is a regular expression or a string that defines a regular expression. 
-
-- ` ^.*$ `
-- ` "\\{.+\\}" `
-- ` \d{4}-\d{2}-\d{2} `
-- ` "\\\\{4}"`
-- ` "(..)\\1" `
+1.  Matches a string that starts and ends with any amount (0-1+) of any character.
+2.  Matches a string that has an opening brace, followed by at least one of any character, then has a closing brace.
+3.  Matches a string that has a 4 digit number, then a dash, then a two digit number, then a dash, then a 2 digit number.
+4.  Matches a string that has 4 backslashes in a row.
+5.  Matches a string that repeats a pair of any characters.
 
 **Problem 4.** Construct regular expressions to match words that:
 
-- Start with “y”.
-- Have seven letters or more.
-- Contain a vowel-consonant pair
-- Contain at least two vowel-consonant pairs in a row.
-- Contain the same vowel-consonant pair repeated twice in a row.
+-   Start with “y”. `"^y"`
+-   Have seven letters or more. \[a-z\] `".{7,}"`
+-   Contain a vowel-consonant pair `"[aeiou][^aeiou]"`
+-   Contain at least two vowel-consonant pairs in a row. `"([aeiou][^aeiou]){2,}"`
+-   Contain the same vowel-consonant pair repeated twice in a row. `"([aeiou][^aeiou])\\1"`
 
-For each example, verify that they work by running them on the `stringr::words` dataset and show the first 10
-results (hint: combine `str_detect` and logical subsetting).
+For each example, verify that they work by running them on the `stringr::words` dataset and show the first 10 results (hint: combine `str_detect` and logical subsetting).
+
+```{r}
+words_df <- tibble(words)
+
+#Start with "y'
+filter(words_df, str_detect(words, "^y")) |> 
+  head(n = 10)
+
+#Have seven letters or more
+filter(words_df, str_detect(words, ".{7,}")) |> 
+  head(n = 10)
+
+#Contain a vowel-consonant pair
+filter(words_df, str_detect(words, "[aeiou][^aeiou]")) |> 
+  head(n = 10)
+
+#Contain at least two vowel-consonant pair in a row
+filter(words_df, str_detect(words, "([aeiou][^aeiou]){2,}")) |> 
+  head(n = 10)
+
+#Contain the same vowel-consonant pair repeated twice in a row
+filter(words_df, str_detect(words, "([aeiou][^aeiou])\\1")) |> 
+  head(n = 10)
+```
 
 **Problem 5** Consider the `gss_cat` data-frame discussed in Chapter 16 of R4DS (provided as part of the `forcats` package):
 
-- Create a new variable that describes whether the party-id of a survey respondent is "strong" if they are a
-strong republican or strong democrat, "weak" if they are a not strong democrat, not strong republican, or independent of any type, and "other" for the rest.
+-   Create a new variable that describes whether the party-id of a survey respondent is "strong" if they are a strong republican or strong democrat, "weak" if they are a not strong democrat, not strong republican, or independent of any type, and "other" for the rest.
 
-- Calculate the mean hours of TV watched by each of the groups "strong", "weak", and "other" and display it with a dot-plot (geom_point). Sort the 
-levels in the dot-plot so that the group appears in order of most mean TV hours watched.
+```{r}
+gss_cat |> 
+  group_by(partyid) |> 
+  count() |> arrange(desc(n))
 
+strong = c("Strong democrat", "Strong republican")
+weak = c("Independent", "Not str democrat", "Not str republican", 
+         "Ind,near dem", "Ind,near rep")
 
+gss_cat <- gss_cat |> 
+  mutate(sentiment = fct_collapse(partyid,
+                                  "strong" = strong,
+                                  "weak" = weak,
+                                  other_level = "other"))
+```
+
+-   Calculate the mean hours of TV watched by each of the groups "strong", "weak", and "other" and display it with a dot-plot (geom_point). Sort the levels in the dot-plot so that the group appears in order of most mean TV hours watched.
+
+```{r}
+gss_cat |> 
+  group_by(sentiment) |> 
+  summarise(mean = mean(tvhours, na.rm = TRUE)) |> 
+  ggplot(aes(x = mean, y = fct_reorder(sentiment, mean))) +
+  geom_point(size = 4, color = 'salmon')
+```
