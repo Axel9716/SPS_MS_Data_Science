@@ -25,6 +25,11 @@ If you have access to data on an entire population, say the opinion of every adu
 **Setting a seed:** You will take random samples and build sampling distributions in this lab, which means you should set a seed on top of your lab. If this concept is new to you, review the lab on probability.
 </div>
 
+```{r set-seed}
+set.seed(606)
+```
+
+
 ## Getting Started
 
 ### Load packages
@@ -94,10 +99,35 @@ samp <- us_adults %>%
 
 **Insert your answer here**
 
+*Answer: 61.7% of adults in my sample think climate change affects their local community.*
+
+```{r}
+samp_yes_summ <- samp |> 
+  count(climate_change_affects) |> 
+  mutate(p_hat = n/sum(n)) |> 
+  filter(climate_change_affects == "Yes") |> 
+  select(!n)
+samp_yes_summ
+```
+
+
 1.  Would you expect another student's sample proportion to be identical to yours? 
     Would you expect it to be similar? Why or why not?
 
 **Insert your answer here**
+
+*Answer: I would expect most of the other students' sample proportion to be similar to mine, because the 95% confidence interval of my sample (49.4%, 74.0%) includes the population proportion of 62%.*
+
+```{r}
+samp_p_hat <- samp_yes_summ |> 
+  pull(p_hat)
+
+CI = c(samp_p_hat - (1.96 * (sqrt(samp_p_hat * (1-samp_p_hat) / 60))),
+       samp_p_hat + (1.96 * (sqrt(samp_p_hat * (1-samp_p_hat) / 60)))) |> 
+  round(3)
+CI
+```
+
 
 ## Confidence intervals
 
@@ -149,6 +179,8 @@ To recap: even though we don't know what the full population looks like, we're 9
 
 **Insert your answer here**
 
+*Answer: 95% confidence means we are 95% confident that the population proportion falls with the confidence interval.*
+
 In this case, you have the rare luxury of knowing the true population proportion (62%) since you have data on the entire population. 
 
 1.  Does your confidence interval capture the true population proportion of US adults 
@@ -157,11 +189,15 @@ In this case, you have the rare luxury of knowing the true population proportion
 
 **Insert your answer here**
 
+*Answer: My bootstrap confidence interval (50.0%, 73.3%) does capture the population proportion of 62%.*
+
 1.  Each student should have gotten a slightly different confidence interval. What 
     proportion of those intervals would you expect to capture the true population 
     mean? Why?
 
 **Insert your answer here**
+
+*Answer: I would expect 95% of my classmates to capture the population proportion, because the 95% confidence interval of a sampling distribution gives us 95% confidence that another sampling distribution of 95% from the same population will also contain the population mean.*
 
 In the next part of the lab, you will collect many samples to learn more about how sample proportions and confidence intervals constructed based on those samples vary from one sample to another.
 
@@ -290,6 +326,8 @@ shinyApp(
 
 **Insert your answer here**
 
+*Answer: 94% of the constructed confidence intervals contained the population mean, which is not equal to the 95% confidence interval that was set. This is both because the 95% confidence interval is not not a guaranteed interval, but rather an estimate.*
+
 * * *
 
 ## More Practice
@@ -300,12 +338,24 @@ shinyApp(
 
 **Insert your answer here**
 
-1.  Using code from the **infer** package and data fromt the one sample you have 
+*Answer: At an interval of 90%, for example, the distribution would be narrower. The would be a more precise estimation, but also contain more errors. On the contrast, an interval of 99% would be wider, less precise, and contain less errors.*
+
+1.  Using code from the **infer** package and data from the one sample you have 
     (`samp`), find a confidence interval for the proportion 
     of US Adults who think climate change is affecting their local community with a 
     confidence level of your choosing (other than 95%) and interpret it.
 
 **Insert your answer here**
+
+*Answer: We can be 99% confident that the population mean falls in the interval (51.7%, 79.2%).*
+
+```{r samp-bootstrap-99-ci}
+samp |> specify(response = climate_change_affects, success = "Yes") |> 
+        generate(reps = 100, type = "bootstrap") |> 
+        calculate(stat = "prop") |> 
+        get_ci(level = .99)
+```
+
 
 1.  Using the app, calculate 50 confidence intervals at the confidence level you chose 
     in the previous question, and plot all intervals on one plot, and calculate 
@@ -315,24 +365,40 @@ shinyApp(
     
 **Insert your answer here**
 
+*Answer: Using the app, I found the 98% of my simulations contained the population proportion This is somewhat close but not equal to the 99% confidence interval that I set.*
+
 1.  Lastly, try one more (different) confidence level. First, state how you expect the
     width of this interval to compare to previous ones you calculated. Then, 
     calculate the bounds of the interval using the **infer** package and data 
     from `samp` and interpret it. Finally, use the app to generate many intervals 
-    and calculate the proportion of intervals that are capture the true population 
+    and calculate the proportion of intervals that capture the true population 
     proportion.
 
 **Insert your answer here**
+
+*Answer: I chose a confidence interval of 90%, so expect the width of this interval to be the narrowist out of the previous tests of 95% and 99%. At a 90% confidence interval, I have 90% confidence that the population proportion falls in the interval (50.0%, 73.3%). Furthermore, we can expect that 90% of 90% CI sampling distributions from this population will also contain the population proportion. Using the app, I found that 92% of my simulations contained the population proportion.*
+
+```{r}
+samp |> specify(response = climate_change_affects, success = "Yes") |> 
+        generate(reps = 100, type = "bootstrap") |> 
+        calculate(stat = "prop") |> 
+        get_ci(level = .9)
+```
+
 
 1.  Using the app, experiment with different sample sizes and comment on how the 
     widths of intervals change as sample size changes (increases and decreases).
     
 **Insert your answer here**
 
+*Answer: As the sample size increases, the widths of the intervals decrease.*
+
 1.  Finally, given a sample size (say, 60), how does the width of the interval change 
     as you increase the number of bootstrap samples. **Hint:** Does changing the 
     number of bootstap samples affect the standard error?
 
 **Insert your answer here**
+
+*Answer: There is no noticeable change in the width of the intervals as you increase the number of bootstrap samples.*
 
 * * *
