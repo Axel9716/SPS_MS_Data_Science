@@ -1,7 +1,10 @@
 ---
 title: "Lab 6: R and SQL"
-format: html
+author: "Alex Ptacek"
+format: pdf
 editor: source
+editor_options: 
+  chunk_output_type: console
 ---
 
 # Overview
@@ -27,16 +30,60 @@ library(nycflights13)
 
 For the first part of this lab exercise, we will be using the `nycflights` library, which contains 
 several different built in datasets including `planes`, which has information on each plane that
-appears in the data; `flights`, which has information on individual flights; `airports`, which has information on individual airports; and `weather`, which has information on the weather that the origin airports. In order to do this set of lab exercises, you will need to use different types of joins to combine variables in each data frame.
+appears in the data; `flights`, which has information on individual flights; `airports`, which has information on individual airports; and `weather`, which has information on the weather at the origin airports. In order to do this set of lab exercises, you will need to use different types of joins to combine variables in each data frame.
 
 **Problem 1**
 
 - Use the `flights` and `planes` tables to compute the mean departure delay of each aircraft that has more than 30 recorded flights in the dataset. Hint: Make note of the fact that the variable `year` appears in both `flights` and `planes` but means different things in each before performing any joins.
 
+```{r}
+flights |> 
+  left_join(planes, by = join_by(tailnum)) |> 
+  group_by(model) |> 
+  summarise(n = n(), mean_dep_delay = mean(dep_delay)) |> 
+  filter(n >30)
+```
+
+
 - Use `anti-join` to identify flights where `tailnum` does not have a match in `plane`. Determine
 the carriers for which this problem is the most common. 
 
+```{r}
+flights |> 
+  anti_join(planes, by = join_by(tailnum)) |> 
+  count(carrier) |> 
+  arrange(desc(n)) |> 
+  left_join(airlines) |> 
+  relocate(name, .before = n)
+```
+
+
 - Find the airplane model which made the most flights in the dataset, and filter the dataset to contain only flights flown by airplanes of that model, adding a variable which corresponds to the year each those airplanes were built. Then compute the average departure delay for each year of origin and plot the data. Is there any evidence that older planes have more greater departure delays?
+
+*Answer: Older manufactures of the airplane model with the most flights seem to have greater departure delays.*
+
+```{r most-flights-model-avg-dep-delay, warning=FALSE}
+#Find model with most flights
+most_flights_model <- flights |> 
+  left_join(planes, by = join_by(tailnum)) |> 
+  count(model) |> 
+  slice_max(order_by = n, n = 2) |> 
+  filter(model != is_null(model)) #Filtering out the null value as this likely represents multiple models
+
+#Find average dep_delay by year_built for this model
+flights |> 
+  left_join(planes, by = join_by(tailnum)) |> 
+  rename(year_built = year.y) |> 
+  filter(model %in% most_flights_model$model) |> 
+  group_by(year_built) |> 
+  summarise(mean_dep_delay = mean(dep_delay, na.rm = TRUE)) |> 
+  
+#Plot this table
+  ggplot(aes(x = year_built, y = mean_dep_delay)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE, color = "salmon")
+```
+
 
 **Problem 2**
 
@@ -55,6 +102,17 @@ airports |>
 ```
 You might want to use the size or color of the points to display the average delay for each airport.
 
+```{r}
+flights |> 
+  group_by(dest) |> 
+  summarise(mean_arr_delay = mean(arr_delay)) |> 
+  left_join(airports, join_by(dest == faa)) |> 
+  ggplot(aes(x = lon, y = lat, size = mean_arr_delay)) +
+  borders("state") +
+  geom_point() +
+  coord_quickmap()
+```
+
 
 **Part II: Creating and Accessing a Database **
 
@@ -71,15 +129,152 @@ a small subset here. You can download this file by clicking here:
 - `sports_program_data.csv` contains variables which either describe properties of a sports team or a college. Split `sports_programs_data` into two data frames, one called `colleges`
 and another called `teams`. How can you tell which variables describe colleges and which describe teams? Use the data dictionary and observations of how the values vary as you move from college to college to help make the decision easier. Make sure there are primary keys for both the colleges and teams data frames (verify with `count`)- what are the primary keys in each case and are they simple keys (one variable) or compound keys (require multiple variables). One of these data-sets should contain a foreign key- which one has it and what variables comprise it?
 
+```{r}
+sports_program_costs <- read_csv("https://raw.githubusercontent.com/georgehagstrom/DATA607/refs/heads/main/website/assignments/labs/labData/sports_program_costs.csv")
+```
+
+*Answer: I could tell which data belonged to `colleges` and which belonged to `teams` based on the data dictionary. The `colleges` data has variables that only identify aspects of the school. This includes the 3 sports division columns, such as classification code, because each school can only be apart of 1 sports division. It does not include the granularity of individual sport-level data, such as sport, gender makeup, and revenue. The `teams` data includes individual sport-level data (i.e. the remaining columns), plus the school code (`unitid`) to identify the team, and the `year` because observations are yearly. The primary key for `colleges` is `year` and `unitid`, and the primary key for `teams` is `year`, `unitid`, and `sportscode`. These are both compound keys. The foreign key is in `teams` and it is `year` and `unitid`.*
+
+```{r}
+#Create colleges table
+colleges <- sports_program_costs |> 
+  select(year:sector_name) |> 
+  group_by(across(year:classification_other), sector_cd, sector_name) |> 
+  summarise(ef_male_count = sum(ef_male_count),
+            ef_female_count = sum(ef_female_count),
+            ef_total_count = sum(ef_total_count))
+
+#Check colleges primary key
+colleges |> 
+  count(year, unitid) |> 
+  filter(n > 1)
+
+#Create teams table
+teams <- sports_program_costs |> 
+  select(year, unitid, sportscode:sports) 
+
+#Check teams primary key
+teams |> count(year, unitid, sportscode) |> 
+  filter(n >1)
+```
+
+
 - The variable `sector_name` contains information about whether a college is public, private, 
 non-profit, for-profit, a 2-year college, or a 4-year + college. Split this variable (using `separate_wider_delim`) into two variables, one of which describes whether the college is a Public, Private nonprofit, or private for-profit, and another which describes how many years the college programs run.
 
+```{r}
+#Examine sector_name variable
+view_sect_names <- colleges |> 
+  group_by(sector_name) |> 
+  count(sector_name)
+view_sect_names |> head(n = 5)
+
+#Separate sector_name by comma as delim
+colleges <- colleges |> 
+  separate_wider_delim(cols = sector_name, delim = ", ", 
+                       names = c("sector_type", "degree_type"),
+                       cols_remove = FALSE) 
+
+#Confirm changes worked
+view_sect_names2 <- colleges |> 
+  group_by(sector_type, degree_type) |> 
+  count(sector_type, degree_type)
+view_sect_names2 |> head(n = 5)
+```
+
+
 - Several variables are candidates to be recoded as factors, for example `state_cd`, 
 `zip_text`, `classification_name`, `sports`, and the `sector` variables you just created for the previous part. Recode these variables as categorical variables. For the `classification` variable, use the `classification_code` to order the factors according to the numeric code. 
+
+```{r}
+#Create state_order as levels for state_cd
+state_order <- append(state.abb, "DC", after = 7)
+state_order <- append(state_order, "PR", after = 38)
+state_order <- append(state_order, "VI", after = 47)
+
+#Mutate state_cd into factor
+colleges <- colleges |> 
+  mutate(state_cd = fct(state_cd, levels = state_order))
+
+
+#Create sorted_zips as levels for zip_text
+sorted_zips <- fct_reorder(colleges$zip_text, as.integer(colleges$zip_text), .na_rm = FALSE)
+
+#Mutate zip_text into factor
+colleges <- colleges |> 
+  mutate(zip_text = fct(zip_text, levels = levels(sorted_zips)))
+
+
+#Create sorted_class as levels for classification_name
+class_order <- fct_reorder(colleges$classification_name, colleges$classification_code)
+
+#Mutate classification_name into factor
+colleges <- colleges |> 
+  mutate(classification_name = fct(classification_name, levels = levels(class_order)))
+
+
+#Create sports_order as levels for sports
+sports_order <- fct_reorder(teams$sports, teams$sportscode)
+
+#Mutate sports into factor
+teams <- teams |> 
+  mutate(sports = fct(sports, levels = levels(sports_order)))
+
+
+#Create sector_order as levels for sector_name
+sector_order <- fct_reorder(sports_program_costs$sector_name, sports_program_costs$sector_cd)
+
+#Mutate sector_name into factor
+colleges <- colleges |> 
+  mutate(sector_name = fct(sector_name, levels = levels(sector_order)))
+  
+
+#Observe changes
+glimpse(colleges)
+glimpse(teams)
+```
+
 
 **Problem 4** 
 
 - Using `DBI`, `duckdb`, and `dbplyr`, create a relational database with two tables, writing the `sports` data frame you created in problem 3 to one and the `colleges` data frame (also from problem 3) to the other. Write this database to disk. How does the size of the database file compare to the original csv?
 
+*Answer: The original file was 24.4MB. The new relational database is 4.5MB.*
+
+```{r }
+con <- DBI::dbConnect(duckdb::duckdb(), dbdir = "duckdb")
+
+dbWriteTable(con, "colleges", colleges)
+dbWriteTable(con, "teams", teams)
+
+dbListTables(con)
+```
+
+
 - Use `dbplyr` to write a query to this database that calculates the top 10 colleges ranked by
 the average profit (defined as revenue - expenses) of their american football team over the years of data. Print the SQL query that results from your R pipeline using `show_query()` and then use `collect()` to show the results of this query.
+
+```{r warning=FALSE}
+#Load dbplyr tables
+colleges_tbl <- tbl(con, "colleges")
+teams_tbl <- tbl(con, "teams")
+
+teams_tbl <-  teams_tbl |> 
+  mutate(profit = total_rev_menwomen - total_exp_menwomen)
+
+colleges_tbl |> 
+  left_join(teams_tbl, by = join_by(year, unitid)) |> 
+  filter(sportscode == 7) |> 
+  group_by(institution_name) |> 
+  summarise(mean_profit = mean(profit)) |> 
+  arrange(desc(mean_profit)) |> 
+  head(10) |> 
+  show_query() |> 
+  collect()
+```
+
+
+
+
+
+
