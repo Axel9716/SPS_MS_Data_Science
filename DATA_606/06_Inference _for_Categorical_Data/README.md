@@ -1,3 +1,0 @@
-# Module 6: Inference for Categorical Data
-
-Just lab 6 so far...
