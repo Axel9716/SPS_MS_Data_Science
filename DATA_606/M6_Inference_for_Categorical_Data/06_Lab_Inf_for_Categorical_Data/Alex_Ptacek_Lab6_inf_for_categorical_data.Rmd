@@ -35,6 +35,10 @@ library(openintro)
 library(infer)
 ```
 
+```{r}
+set.seed(606)
+```
+
 
 ### The data
 
@@ -44,9 +48,44 @@ You will be analyzing the same dataset as in the previous lab, where you delved 
 
 **Insert your answer here**
 
+```{r}
+#Counts of each category of `text_while_driving_30d`
+yrbss |> 
+  group_by(text_while_driving_30d) |> 
+  count() |> 
+  arrange(desc(n))
+```
+
+
 2.  What is the proportion of people who have texted while driving every day in the past 30 days and never wear helmets?
 
 **Insert your answer here**
+
+*Answer: The proportion of people who have texted while driving every day in the past 30 days and never wear a helmet is 3.4%.*
+
+```{r}
+yrbss |> 
+  group_by(helmet_12m, text_while_driving_30d) |> 
+  summarise(n = n(), .groups = "drop") |> 
+  mutate(prop = round(n/sum(n), 3)) |> 
+  filter(helmet_12m == "never" & text_while_driving_30d == "30")
+
+```
+
+```{r echo=FALSE, eval=FALSE}
+count_props <- function(df, group_vars, filter) { 
+  df |> 
+    group_by(pick({{group_vars}})) |> 
+    summarise(n = n(), .groups = "drop") |> 
+    mutate(prop_ = round(n/sum(n), 3)) |> 
+    filter(!!! rlang::parse_exprs(filter))
+}
+
+
+yrbss |>  count_props(c(helmet_12m, text_while_driving_30d), 
+                      c("helmet_12m == 'never'", "text_while_driving_30d == '30'"))
+```
+
 
 Remember that you can use `filter` to limit the dataset to just non-helmet wearers. Here, we will name the dataset `no_helmet`.
 
@@ -87,6 +126,8 @@ Note that since the goal is to construct an interval estimate for a proportion, 
 
 **Insert your answer here**
 
+*Answer: At a confidence interval (6.5%, 7.8%), the margin of error is 0.65%.*
+
 4.  Using the `infer` package, calculate confidence intervals for two other 
     categorical variables (you'll need to decide which level to call "success", 
     and report the associated margins of error. Interpet the interval in context 
@@ -94,6 +135,37 @@ Note that since the goal is to construct an interval estimate for a proportion, 
     countries first, and then use these data sets to construct the confidence intervals.
 
 **Insert your answer here**
+
+*Answer: We can have 95% confidence that, if we take a sample from yrbss, the proportion of males in that sample would be between (50.3%, 52.1%) and the proportion of people who watch TV 5+ hours on a school day would be between (11.5%, 12.6%). Additionally, if `yrbss` is a random sample from the population, we can use those same intervals as an estimate for the population proportions for the respective variable with 95% confidence.*
+
+```{r}
+#Create new dataset that confirms if male or not
+gender_male <- yrbss |> 
+  mutate(male_check = ifelse(gender == "male", "yes", "no"))
+
+#Calculate a 95% confidence interval for the proportion of males
+gender_male |> 
+  drop_na(male_check) |> 
+  specify(response = male_check, success = "yes") |> 
+  generate(reps = 1000, type = "bootstrap") |> 
+  calculate(stat = "prop") |> 
+  get_ci(level = .95)
+```
+
+```{r}
+#Create new data set that classifies people who watch 5+ hours of tv
+five_plus_tv <- yrbss |> 
+  mutate(heavy_tv_usage = ifelse(hours_tv_per_school_day == "5+", "yes", "no"))
+
+#Calculate 95% confidence interval for people who watch 5+ hours of tv
+five_plus_tv |> 
+  drop_na(heavy_tv_usage) |> 
+  specify(response = heavy_tv_usage, success = "yes") |> 
+  generate(reps = 1000, type = "bootstrap") |> 
+  calculate(stat = "prop") |> 
+  get_ci(level = .95)
+```
+
 
 ## How does the proportion affect the margin of error?
 
@@ -109,10 +181,10 @@ Since the population proportion $p$ is in this $ME$ formula, it should make sens
 Since sample size is irrelevant to this discussion, let's just set it to some value ($n = 1000$) and use this value in the following calculations:
 
 ```{r n-for-me-plot}
-n <- 1000
+n <- 10000
 ```
 
-The first step is to make a variable `p` that is a sequence from 0 to 1 with each number incremented by 0.01. You can then create a variable of the margin of error (`me`) associated with each of these values of `p` using the familiar approximate formula ($ME = 2 \times SE$).
+The first step is to make a variable `p` that is a sequence from 0 to 1 with each number incremented by 0.01. You can then create a variable of the margin of error (`me`) associated with each of these values of `p` using the familiar approximate formula ($ME = 2 \times SE$). 
 
 ```{r p-me}
 p <- seq(from = 0, to = 1, by = 0.01)
@@ -133,6 +205,14 @@ ggplot(data = dd, aes(x = p, y = me)) +
     a given sample size, for which value of `p` is margin of error maximized?
 
 **Insert your answer here**
+
+*Answer: As `p` approaches 0.50 in either direction, `me` increases. `me` is maximized when `p` = 0.50.*
+
+```{r}
+dd |> ggplot(aes(x = p, y = me)) + 
+  geom_line()
+```
+
 
 ## Success-failure condition
 
@@ -181,15 +261,21 @@ shinyApp(
 
 **Insert your answer here**
 
+*Answer: Under these conditions, the sampling distribution looks nearly normal and the center is about 0.1. The minimum p is about 0.05 and the maximum p is about 0.15*
+
 7.  Keep $n$ constant and change $p$. How does the shape, center, and spread 
     of the sampling distribution vary as $p$ changes. You might want to adjust
     min and max for the $x$-axis for a better view of the distribution.
 
 **Insert your answer here**
 
+*Answer: As `p` approaches 0.5 from either direction, the spread of the sampling distribution increases. The center is always nearly equal to `p`, so it moves according to changes to `p`. The shape looks nearly normal regardless of changes to `p`.*
+
 8.  Now also change $n$. How does $n$ appear to affect the distribution of $\hat{p}$?
 
 **Insert your answer here**
+
+*Answer: Increasing `n` decreases the spread of the sampling distribution. When `n` is very low, the distribution is not very filled in, and therefore doesn't really resemble a normal distribution, and it's hard to determine a center. However, above a certain `n` (depending on `p`), changing `n` doesn't have too much effect on the shape or center of the distribution.*
 
 * * *
 
@@ -205,12 +291,42 @@ For some of the exercises below, you will conduct inference comparing two propor
 
 **Insert your answer here**
 
+*Answer: First, I will test the independence of 10+ hours sleep and days training to see if there's a significant disproportion. The null hypothesis for this test is: of people who sleep 10+ hours, there is equal likelihood of them training 0-7 days (8 outcomes). The alternative hypothesis is that the distribution is uneven. The chi-square value for the distribution of days training is 206 and the p-value is near 0. This means we can be nearly 100% confident that people sleeping 10+ hours and the amount of days training are not independent. Since training 7 days is well above the expected proportion of .125 (1/8), we know that our sample of people who sleep 10+ hours are more likely to train 7 days. Next, we want to test if the population will also have a proportion for 7 days training above .125 with 95% confidence. The null hypothesis for this test is: of people who sleep 10+ hours, the amount who are training seven days a week is equal to or less than the amount of people who strength train any other amount days a week. The alternative hypothesis is that 7 days of training is higher than the expected proportion of 12.5%. Based on our sampling distribution, we can have 95% confidence that the proportion of 7 days training for a population that sleeps 10+ hours is between (21.8%, 32.1%). Since the minimum of this interval is greater that 12.5%, we have convincing evidence that people who sleep 10+ hours are more likely to strength train 7 days a week.*
+
+```{r} 
+#Create dataset of sleep = 10+
+most_sleep <- yrbss |> 
+  filter(school_night_hours_sleep == "10+")
+
+#Chi_sq test to see if sleep 'explains' training days
+most_sleep |> 
+  mutate(strength_training_7d = as.character(strength_training_7d)) |> 
+  drop_na(strength_training_7d) |> 
+  chisq_test(strength_training_7d ~ school_night_hours_sleep)
+
+#Add binary variable based on days training
+most_sleep <- most_sleep |> 
+  mutate(train_ind = ifelse(strength_training_7d == 7, "yes", "no"))
+
+#Calculate 95% CI of days training
+most_sleep |> 
+  drop_na(train_ind) |> 
+  specify(response = train_ind, success = "yes") |> 
+  generate(reps = 1000, type = "bootstrap") |> 
+  calculate(stat = "prop") |> 
+  get_ci(level = .95)
+
+```
+
+
 10.  Let's say there has been no difference in likeliness to strength train every
     day of the week for those who sleep 10+ hours. What is the probablity that
     you could detect a change (at a significance level of 0.05) simply by chance?
     *Hint:* Review the definition of the Type 1 error.
 
 **Insert your answer here**
+
+*Answer: If x_0:x_7 = .125 at a significance level of 0.05, there is a 5% probability that you can detect a change by chance.*
 
 11.  Suppose you're hired by the local government to estimate the proportion of 
     residents that attend a religious service on a weekly basis. According to 
@@ -222,5 +338,13 @@ For some of the exercises below, you will conduct inference comparing two propor
     error. This question does not require using a dataset.
 
 **Insert your answer here**
+
+*Answer: To ensure a ME no greater that 1% with no knowledge of p, we have to calculate for p = .5, which is where ME will be highest, set z-score to 1.96 and solve for n. Our sample size must be at least 9,604.*
+
+```{r}
+(.5*.5)/((.01/1.96)^2)
+```
+
+
 
 * * *
