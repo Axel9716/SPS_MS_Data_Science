@@ -1,0 +1,3 @@
+# Module 9: Inference for Numerical Variables
+
+Just Lab 7 so far...
