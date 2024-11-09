@@ -1,0 +1,3 @@
+# Module 8: Linear Regression
+
+Just Lab 8 so far... 
