@@ -1,7 +1,10 @@
 ---
 title: "Lab 8: Text Mining and NLP"
-format: html
+author: "Alex Ptacek"
+format: pdf
 editor: source
+editor_options: 
+  chunk_output_type: console
 ---
 
 # Overview
@@ -14,11 +17,75 @@ the [tidy text mining with r](https://www.tidytextmining.com/) textbook. Note: t
 * Download "simple_reviews.json" from the following google drive link: [https://drive.google.com/drive/folders/1bk_2ihR5gQ8k6Tkn0NNpB58K1efruKnX?usp=sharing](https://drive.google.com/drive/folders/1bk_2ihR5gQ8k6Tkn0NNpB58K1efruKnX?usp=sharing), read it into R, and rectangle it so that it is a dataframe where each row contains a single amazon review. If this file is too large,
 [click here to download a shorter version](https://drive.google.com/file/d/1d0C-xi_hSltKNn5s3dfdimI_MAkbWJQI/view?usp=sharing) where 90% of the reviews have been dropped].
 
+**Load Packages**
+```{r load-pkg, message=FALSE}
+library(tidyverse)
+library(jsonlite)
+library(tidytext)
+```
+
+```{r}
+reviews_json <- tibble(json = read_json("~/Downloads/simple_reviews.json"))
+
+reviews <- reviews_json |> 
+  unnest_wider(json)
+```
+
+
 * To make sentiment analysis possible, add an index variable to the review data frame so that each review is uniquely identified by an integer. Then tokenize the review data frame using words as the tokens, and remove all stop words from the data set.
+
+```{r message=FALSE}
+data(stop_words)
+
+reviews <- reviews |> 
+  mutate(index = row_number(), .before = 1) |> 
+  unnest_tokens(word, reviewText) |> 
+  anti_join(stop_words)
+  
+```
+
 
 * Does sentiment correlate with reviews? Use the `afinn` lexicon to calculate a sentiment score for each review, normalizing by the number of lexicon words in each review. Visualize the distribution of sentiment scores for each rating and calculate the mean sentiment score for each review category. What do you observe?
 
+*Answer: Based on the distribution of `sentiment_score` by review, most reviews seem to be at least slightly positive. Based on the average `sentiment_score` by `overall` (rating), `sentiment_score` seems to correlate positively with the 1-5 rating. As rating score increases, `sentiment_score` tends to increase.*
+
+```{r message=FALSE}
+afinn <- get_sentiments("afinn")
+
+review_sentiment_scores <- reviews |> 
+  inner_join(afinn) |> 
+  group_by(index) |> 
+  summarise(n = n(),
+            sentiment_score = mean(value))
+
+review_sentiment_scores |> 
+  ggplot(aes(x = sentiment_score)) +
+    geom_histogram(binwidth = 1)
+
+reviews |> 
+  inner_join(review_sentiment_scores) |>  
+  group_by(overall) |> 
+  summarise(n = n(),
+            sentiment_score = mean(sentiment_score))
+```
+
+
 * Reviewer Personalities: For each reviewer, compute the number of ratings, the mean sentiment, and the mean review score. Filter for reviewers who have written more than 10 reviews, and plot the relationship between mean rating and mean sentiment. What do you observe? 
+
+*Answer: The relationship between `rating` and `sentiment_score` by reviewer seems slightly positive. As average `rating` increases, average `sentiment_score` increases slightly, as well. However, there is a significant ceiling and floor due to the finite 1-5 rating range, which is increasing the uncertainty of any visible correlation.*
+
+```{r message=FALSE}
+reviews |> 
+  inner_join(review_sentiment_scores) |> 
+  group_by(reviewerID) |> 
+  summarise(n = n(),
+            sentiment_score = mean(sentiment_score),
+            rating_score = mean(overall)) |> 
+  filter(n > 10) |> 
+  ggplot(aes(x = rating_score, y = sentiment_score)) +
+  geom_point()
+```
+
 
 
 **Problem 2: Words with high relative frequency **
@@ -28,7 +95,19 @@ hasn't been joined with the sentiment lexicon data. For each item (`asin`), use 
 to find the word that occurs in the reviews of that item with the highest frequency relative to the
 frequency of words in the entire review test dataset. 
 
+```{r}
+reviews_tf_idf <- reviews |> 
+  group_by(asin, word) |> 
+  summarise(n = n()) |> 
+  bind_tf_idf(word, asin, n) |> 
+  arrange(desc(tf_idf))
+  
+```
+
+
 * Select five items from (either at random or by hand) and look up the `asin` code on Amazon.com. In each of these cases, does the highest relative frequency word correspond to the identify or type of the item that you chose? You may not be able to find every single item, but I was able to find a solid majority of the ones I searched for by searching amazon.com for the `asin`. 
+
+*Answer: I searched about 30 `asin`s and was only able to get one result, so I think most of these products have been taken off Amazon. I found one where the highest tf_idf was for "oven", but the product is paint, so they are not related.*
 
 **Problem 3: Bigrams and Sentiment**
 
@@ -36,6 +115,45 @@ frequency of words in the entire review test dataset.
 `don't`. What are the 10 most common words occurring after `not` and after `don't`? What are their sentiment
 values according to the `afinn` lexicon?
 
+```{r}
+n_gram_reviews <- reviews_json |> 
+  unnest_wider(json) |> 
+  mutate(index = row_number(), .before = 1) |> 
+  unnest_tokens(bigram, reviewText, token = "ngrams", n = 2) |> 
+  separate(bigram, c("word1", "word2"), sep = " ") |> 
+  filter(!word1 %in% stop_words$word) |> 
+  filter(!word2 %in% stop_words$word)
+
+
+bigram_negatives <- n_gram_reviews |> 
+  filter(word1 == "not" |
+         word1 == "don't" |
+         word1 == "dont") |> 
+  count(word1, word2, sort = TRUE)
+
+bigram_negatives |> 
+  head(10) |> 
+  inner_join(afinn, by = join_by(word2 == word))
+```
+
+
 * Pick the most commonly occurring bigram where the first word is `not` or `don't` and the `afinn` sentiment of the second word is 2 or greater. Compute the mean rating of the reviews containing this bigram. How do they compare the average review score over the entire dataset?
+
+*Answer: The mean rating of reviews containing the bigram "dont recommend" (3) is 1.4 points lower on average than the mean rating of all reviews in the dataset (4.4).*
+
+```{r}
+bigram_negatives |> 
+  inner_join(afinn, by = join_by(word2 == word)) |> 
+  filter(value >= 2)
+
+n_gram_reviews |> 
+  filter(word1 == "dont", word2 == "recommend") |> 
+  group_by(word1, word2) |> 
+  summarise(mean_rating = mean(overall))
+
+reviews |> 
+  summarise(mean_rating = mean(overall))
+```
+
 
 
