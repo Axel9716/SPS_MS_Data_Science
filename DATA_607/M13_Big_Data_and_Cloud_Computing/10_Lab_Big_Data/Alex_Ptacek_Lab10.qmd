@@ -1,7 +1,9 @@
 ---
 title: "Lab 10: Tools for Working with Big Data"
-author: "George I. Hagstrom"
+author: "Alex Ptacek"
 format: html
+editor_options: 
+  chunk_output_type: console
 ---
 
 
@@ -27,6 +29,12 @@ of each taxi ride:
 
 3. [Click here to download the taxi location codes dataset](https://drive.google.com/file/d/1BjHkT3fJv7cdLvuD0H04RYvvWyeYOwDD/view?usp=drive_link)
 
+```{r load-pkg, message=FALSE}
+library(data.table)
+library(tidyverse)
+library(widyr)
+library(sparklyr)
+```
 
 
 **Problem 1**
@@ -39,8 +47,40 @@ Next join with the location information
 so that the borough of origin and destination of each taxi ride is present in the data.table (this may require joining twice). Verify that this final data.table has the same memory address
 as the original data.frame. Hint: `lubridate` has a variety of functions for working with characters that represent time stamps.
 
+```{r}
+taxi_november_2021 <- fread("~/SPS_MS_DS/DATA_607/M13_Big_Data_and_Cloud_Computing/10_Lab_Big_Data/taxi_november_2021.csv")
+taxi_zone_lookup <- fread("~/SPS_MS_DS/DATA_607/M13_Big_Data_and_Cloud_Computing/10_Lab_Big_Data/taxi_zone_lookup.csv")
+
+
+address(taxi_november_2021)
+
+
+taxi_november_2021[, c('trip_duration', 'avg_speed') := {
+  trip_duration <- as.numeric(tpep_dropoff_datetime - tpep_pickup_datetime)
+  avg_speed <- trip_distance*60*60/trip_duration
+  avg_speed <- case_when(avg_speed < 0 ~ NA,
+                         avg_speed > 90 ~ NA,
+                         trip_duration > 10800 ~ NA,
+                         .default = avg_speed)
+  list(trip_duration, avg_speed)
+}]
+
+
+taxi_november_2021[taxi_zone_lookup, on = c(PULocationID = 'LocationID'), pu_borough := Borough]
+taxi_november_2021[taxi_zone_lookup, on = c(DOLocationID = 'LocationID'), do_borough := Borough]
+
+
+address(taxi_november_2021)
+```
+
+
 - For each combination of origin and destination boroughs, calculate the average speed (technically the average
 of the average speed) of taxi rides between those two boroughs and the total number of taxi rides between those boroughs, sort in descending order by average speed, and display the full answer.
+
+```{r}
+taxi_november_2021[, mean(avg_speed, na.rm = TRUE), by = list(pu_borough, do_borough)]
+```
+
 
 
 **Problem 2**
@@ -51,5 +91,39 @@ the tip or fare was less 0. Then, for taxi rides originating in each borough, ca
 tip percentage. 
 
 - For taxi rides on November 25th, filter the data so that tip percentage includes only rows where the tip and fare were non-negative, and the tip percentage is less than 100\%. Make a plot of the distribution of cab fares for taxi rides originating in each borough (using ggplot2 or ggridges). Perform all of the computations and data wrangling in Spark, and only collect the final tibbles to display your results make your plot.
+
+```{r}
+sc <- spark_connect(master = "local", memory = FALSE)
+
+taxi_rides <- spark_read_csv(sc, "~/SPS_MS_DS/DATA_607/M13_Big_Data_and_Cloud_Computing/10_Lab_Big_Data/taxi_november_2021.csv")
+
+taxi_locations <- spark_read_csv(sc, "~/SPS_MS_DS/DATA_607/M13_Big_Data_and_Cloud_Computing/10_Lab_Big_Data/taxi_zone_lookup.csv")
+
+taxi_rides <- taxi_rides |> 
+  left_join(taxi_locations, by = join_by(PULocationID == LocationID)) |> 
+  rename(pu_borough = Borough) |> 
+  left_join(taxi_locations, by = join_by(DOLocationID == LocationID)) |> 
+  rename(do_borough = Borough) |> 
+  mutate(tip_percent = tip_amount/fare_amount) |> 
+  filter(tip_amount >= 0 & fare_amount >= 0) |> 
+  mutate(check = ifelse(tpep_pickup_datetime >= '2021-11-25' & tpep_pickup_datetime < '2021-11-26' & tip_amount < 0 & fare_amount < 0 & tip_percent >= 1, "remove", "keep")) |> 
+  filter(check == "keep")
+
+taxi_ride_groups <- taxi_rides |> 
+  group_by(pu_borough, fare_amount) |> 
+  count()
+
+taxi_ride_groups |> 
+  ggplot(aes(x = pu_borough, y = fare_amount)) + 
+  geom_bar(stat = "identity")
+
+spark_disconnect(sc)
+```
+
+
+
+
+
+
 
 
