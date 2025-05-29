@@ -1,0 +1,223 @@
+---
+title: "APM Chapter 7 HW: Nonlinear Regression"
+author: "Alex Ptacek"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+execute: 
+  warning: false
+  message: false
+---
+
+```{r}
+library(tidyverse)
+library(mlbench)
+library(caret)
+library(janitor)
+library(earth)
+library(kernlab)
+library(VIM)
+
+set.seed(624)
+```
+
+### 7.2. Friedman (1991) introduced several benchmark data sets create by simulation. One of these simulations used the following nonlinear equation to create data:
+
+![](img1.png){width="423"}
+
+where the x values are random variables uniformly distributed between \[0, 1\] (there are also 5 other non-informative variables also created in the simulation). The package mlbench contains a function called `mlbench.friedman1` that simulates these data:
+
+```{r}
+trainingData <- mlbench.friedman1(200, sd = 1)
+
+## We convert the 'x' data from a matrix to a data frame
+## One reason is that this will give the columns names.
+trainingData$x <- data.frame(trainingData$x)
+```
+
+```{r eval=FALSE}
+## Look at the data using
+featurePlot(trainingData$x, trainingData$y)
+## or other methods.
+```
+
+![](Rplot.png){width="533"}
+
+```{r}
+## This creates a list with a vector 'y' and a matrix
+## of predictors 'x'. Also simulate a large test set to
+## estimate the true error rate with good precision:
+testData <- mlbench.friedman1(5000, sd = 1)
+testData$x <- data.frame(testData$x)
+```
+
+Tune several models on these data. For example:
+
+```{r eval=FALSE}
+knnModel <- train(x = trainingData$x,
+y = trainingData$y,
+method = "knn",
+preProc = c("center", "scale"),
+tuneLength = 10)
+
+knnModel
+```
+
+![](img2.png){width="419"}
+
+```{r eval=FALSE}
+knnPred <- predict(knnModel, newdata = testData$x)
+## The function 'postResample' can be used to get the test set
+## perforamnce values
+postResample(pred = knnPred, obs = testData$y)
+```
+
+![](img3.png){width="146"}
+
+Which models appear to give the best performance? Does MARS select the informative predictors (those named X1–X5)?
+
+#### Answer: The MARS model has the best performance because it has the lowest RMSE and highest R-squared. The tuned MARS model has incorporates predictors X1-X5 and excludes the five non-informative variables, and it explains 93.8% of the test set variance. Overall, it is a great model for this data.
+
+```{r}
+mars_grid <- expand.grid(.degree = 1:2, .nprune = 2:10)
+ctrl <- trainControl(method = "cv")
+
+mars_tuned <- train(trainingData$x, trainingData$y,
+                    method = "earth",
+                    tuneGrid = mars_grid,
+                    trControl = ctrl)
+
+mars_pred <- predict(mars_tuned, newdata = testData$x)
+
+postResample(pred = mars_pred, obs = testData$y)
+
+summary(mars_tuned)
+```
+
+```{r}
+svm_tuned <- train(trainingData$x, trainingData$y,
+                   method = "svmRadial",
+                   preProcess = c("center", "scale"),
+                   tuneLength = 14,
+                   trControl = ctrl)
+
+svm_pred <- predict(svm_tuned, newdata = testData$x)
+
+postResample(pred = svm_pred, obs = testData$y)
+```
+
+### 7.5. Exercise 6.3 describes data for a chemical manufacturing process. Use the same data imputation, data splitting, and pre-processing steps as before and train several nonlinear regression models.
+
+**\*\*ALL DATA PROCESSING STEPS FROM EXERCISE 6.3**\*\*
+
+```{r}
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+
+chem_manu_process <- ChemicalManufacturingProcess |> 
+  as_tibble() |> 
+  clean_names()
+
+na_counts <- sapply(chem_manu_process, \(x) sum(is.na(x)))
+
+na_counts <- tibble(vars = names(na_counts),
+       na_counts = as.integer(na_counts)) |> 
+  filter(na_counts > 0)
+
+missing_chem <- chem_manu_process |> 
+  select(all_of(na_counts$vars))
+
+imp_values <- kNN(missing_chem, imp_var = FALSE) |> as_tibble()
+
+chem_data_wip <- chem_manu_process |> 
+  select(-all_of(na_counts$vars)) |> 
+  bind_cols(imp_values)
+
+chem_data_wip <- chem_data_wip |> 
+  mutate(index = row_number())
+
+chem_train <- slice_sample(chem_data_wip, prop = 0.8)
+
+chem_test <- chem_data_wip |> 
+  filter(!index %in% chem_train$index) |> 
+  select(-index)
+
+chem_train <- chem_train |> 
+  select(-index)
+
+chem_train_x <- chem_train |> 
+  select(-yield)
+
+chem_train_y <- chem_train |> 
+  pull(yield) |> 
+  as.vector()
+
+chem_test_x <- chem_test |> 
+  select(-yield)
+
+chem_test_y <- chem_test |> 
+  select(yield)
+```
+
+(a) Which nonlinear regression model gives the optimal resampling and test set performance?
+
+#### Answer: The MARS model has the best resampling and test set performance.
+
+```{r}
+mars_grid <- expand.grid(.degree = 1:2, .nprune = 2:30)
+
+mars_tuned <- train(chem_train_x, chem_train_y,
+                    method = "earth",
+                    tuneGrid = mars_grid,
+                    trControl = ctrl)
+
+mars_pred <- predict(mars_tuned, newdata = chem_test_x)
+
+postResample(pred = mars_pred, obs = chem_test_y)
+```
+
+```{r}
+svm_tuned <- train(chem_train_x, chem_train_y,
+                   method = "svmRadial",
+                   preProcess = c("center", "scale"),
+                   tuneLength = 14,
+                   trControl = ctrl)
+
+svm_pred <- predict(svm_tuned, newdata = chem_test_x)
+
+postResample(pred = svm_pred, obs = as_vector(chem_test_y))
+```
+
+```{r}
+knn_tuned <- train(chem_train_x, chem_train_y,
+                  method = "knn",
+                  preProc = c("center", "scale"),
+                  tuneLength = 20,
+                  trControl = ctrl)
+
+knn_pred <- predict(knn_tuned, newdata = chem_test_x)
+
+postResample(pred = knn_pred, obs = as_vector(chem_test_y))
+```
+
+(b) Which predictors are most important in the optimal nonlinear regression model? Do either the biological or process variables dominate the list? How do the top ten important predictors compare to the top ten predictors from the optimal linear model?
+
+#### Answer: The MARS model only has 4 predictors, which are all hinge functions of process variables. Of these, `manufacturing_process32` and `manufacturing_process09` are the most important. This result is similar to my linear model, because the linear model was also dominated by process variables. Furthermore, the most important variables in the MARS model were also in the top ten in my linear model.
+
+```{r}
+varImp(mars_tuned)
+summary(mars_tuned)
+```
+
+(c) Explore the relationships between the top predictors and the response for the predictors that are unique to the optimal nonlinear regression model. Do these plots reveal intuition about the biological or process predictors and their relationship with yield?
+
+#### Answer: These plots provide further evidence of a strong relationship between these predictors and `yield`. Both predictors appear to have a positive correlation with yield. The plot of `manufacturing_process32` also appears to have a sinusoidal pattern.
+
+```{r}
+ggplot(chem_manu_process, aes(x = manufacturing_process32, y = yield)) +
+  geom_point()
+
+ggplot(chem_manu_process, aes(x = manufacturing_process09, y = yield)) +
+  geom_point()
+```

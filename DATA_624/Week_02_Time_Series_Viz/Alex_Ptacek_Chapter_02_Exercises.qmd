@@ -1,0 +1,436 @@
+---
+title: "FPP: Chapter 2 Exercises"
+author: "Alex Ptacek"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r message=FALSE}
+library(fpp3)
+library(tidyverse)
+library(USgas)
+library(readxl)
+```
+
+# Chapter 2: Exercises
+
+#### Question 1
+
+1.  `Bricks` from `aus_production`
+
+Time interval is 1 Quarter
+
+```{r}
+#Using '?' gets meta-data from data that's within packages
+?aus_production
+
+#Calling the dataset allows us to observe features such as the time interval
+#Limiting print to 5, to keep report more consise
+aus_production |> 
+  print(n = 5)
+
+#autoplot creates a time series when we input a tsibble
+aus_production |> 
+  autoplot(Bricks)
+```
+
+2. `Lynx` from `pelt`
+
+Time interval is 1 Year
+
+```{r}
+?pelt
+
+pelt |> 
+  print(n = 5)
+
+pelt |> 
+  autoplot(Lynx)
+```
+
+3. `Close` from `gafa_stock`
+
+Time interval varies/undetermined
+
+```{r}
+?gafa_stock
+
+gafa_stock |> 
+  print(n = 5)
+
+gafa_stock |> 
+  autoplot(Close)
+```
+
+4. `Demand` from `vic_elec`
+
+Time interval is 30 minutes
+
+```{r}
+?vic_elec
+
+vic_elec |> 
+  print(n = 5)
+
+#Use labs functions to add labels to ggplots
+vic_elec |> 
+  mutate(Demand = Demand / 1e3) |> 
+  autoplot(Demand) +
+  labs(title = "Electricity Demand 2012 - 2015") +
+  xlab("Time (30m intervals)") +
+  ylab("Demand (thousands MWh)")
+```
+
+
+#### Question 2
+
+```{r}
+#max() function finds the max value of numeric variable
+#and .by groups by selected variable
+gafa_stock |> 
+  filter(Close == max(Close), .by = Symbol)
+```
+
+
+#### Question 3
+
+a. 
+```{r}
+tute1 <- read_csv("~/Downloads/tute1.csv")
+view(tute1)
+```
+
+b.
+```{r}
+mytimeseries <- tute1 |>
+  mutate(Quarter = yearquarter(Quarter)) |>
+  as_tsibble(index = Quarter)
+```
+
+c. Removing the facet_grid function leaves us with one plot with incorrect
+   y-axis labels
+```{r}
+mytimeseries |>
+  pivot_longer(-Quarter) |>
+  ggplot(aes(x = Quarter, y = value, colour = name)) +
+  geom_line() +
+  facet_grid(name ~ ., scales = "free_y")
+
+mytimeseries |>
+  pivot_longer(-Quarter) |>
+  ggplot(aes(x = Quarter, y = value, colour = name)) +
+  geom_line()
+```
+
+
+#### Question 4
+
+a.
+```{r}
+library(USgas)
+```
+
+b.
+```{r}
+us_total_timeseries <- tsibble(us_total, key = state, index = year)
+```
+
+c.
+```{r}
+#Observe the format for stat names
+us_total_timeseries |> 
+  count(state)
+
+#Use grepl in filter to shorthand type state names
+us_total_timeseries |> 
+  filter(grepl("main|verm|new hamp|massac|connec|rhode",
+               state, ignore.case = TRUE)) |> 
+  mutate(y = y / 1e3) |> 
+  autoplot(y) +
+  labs(title = "New England Gas Consumption by State") +
+  ylab("Gas Consumption (thousands)")
+```
+
+
+#### Question 5
+
+a.
+```{r}
+textbook_tourism <- read_excel("~/Downloads/tourism.xlsx")
+```
+
+b.
+```{r}
+#Observe time interval and key
+tourism |> 
+  print(n = 5)
+
+#Convert downloaded dataset to a tsibble with same index and key as tourism
+#df from tsibble package
+textbook_tourism <- textbook_tourism |> 
+  mutate(Quarter = yearquarter(Quarter)) |> 
+  tsibble(key = c(Region, State, Purpose), index = Quarter)
+
+#Checks that our datasets are nearly identical
+all.equal(tourism, textbook_tourism)
+```
+
+c.
+```{r warning = FALSE}
+#Find the avg trips by region and purpose and filter to the highest value
+tourism |> 
+  group_by(Region, Purpose) |> 
+  summarise(avg_trips = mean(Trips)) |> 
+  arrange(desc(avg_trips)) |> 
+  head(1)
+```
+
+d.
+```{r}
+#Concatenate Region and Purpose
+#Calculate trips
+trips_by_state <- tourism |> 
+  mutate(region_purpose = str_c(Region, Purpose, sep = "_")) |> 
+  group_by(State, region_purpose) |> 
+  summarise(trips = sum(Trips)) |> 
+  relocate(Quarter, .before = 1)
+
+trips_by_state |> 
+  print(n = 5)
+```
+
+
+#### Question 8
+
+1. `Employed` from `us_employment`
+
+a. time plot
+Based on the time plot, we can see a clear positive trend in this time series, as well as seasonality. There also appears to be a cycle of steady rising followed by short periods of decline. 
+```{r}
+total_private <- us_employment |> 
+  filter(Title == "Total Private") 
+
+total_private |> 
+  autoplot(Employed)
+```
+
+b. seasonal plot
+Based on the seasonal plot, we can see that there is a positive trend in this time series, because the years are descending downwards in the plot. It's hard to see a clear seasonal trend, because the chart is quite busy, and also there may not be any.
+```{r}
+total_private |> gg_season(Employed)
+```
+
+c. seasonal subseries plot
+Based on the seasonal subseries plot, we a consistent positive trend in all months. The averages are fairly similar across all months, furthering our suspicion that there isn't actually seasonality.
+```{r}
+total_private |> gg_subseries(Employed)
+```
+
+d. lag plot
+Every lag plot is nearly perfectly linear, further proving that there is no seasonality. I made the choice to transform the tsibble, changing the index from 1M to 1Q, so that I could see seasonal multiples in a 9 panel grid.
+```{r message = FALSE}
+quarterly_employment <- total_private |> 
+  mutate(Quarter = yearquarter(Month)) |>
+  as_tibble() |> 
+  select(-Month) |> 
+  group_by(Quarter, Series_ID, Title) |> 
+  summarise(Employed = sum(Employed)) |> 
+  ungroup() |> 
+  as_tsibble(index = Quarter, key = Series_ID)
+
+quarterly_employment |> 
+  gg_lag(Employed, geom = "point")
+```
+
+e. ACF and ACF plot
+Based on the ACF coefficients, we can see that there is a strong positive correlation between all of the lagged values. Once again, it is hard to see any seasonality, but there is a clear trend.
+```{r}
+total_private |> ACF(Employed, lag_max = 12)
+
+total_private |> ACF(Employed, lag_max = 48) |> autoplot()
+
+```
+
+2. `Bricks` from `aus_production`
+
+a. time plot
+The time plot shows us that this time series has a steep upward trend up to half-way point, then a mild downward trend. There appears to be strong seasonality, as well as cyclic deep depressions. This cycle seems to start prominently in 1975, and reoccurs about every 5-10 years from then on. Notably, in about 1983, production has its biggest fall.
+```{r}
+aus_production |> autoplot(Bricks)
+```
+
+b. seasonal plot
+Based on the seasonal plot, production seems to peak in Q2 and Q3, especially in Q3 (except some exceptions). There's also several years where there is a sharp decline in production in Q3 and Q4.
+```{r}
+aus_production |> gg_season(Bricks)
+```
+
+c. seasonal subseries plot
+The subseries plots shows us what the seasonality looks like. Production tends to increase from Q1-Q3 and then decrease from Q3-Q1. 
+```{r warning = FALSE}
+aus_production |> gg_subseries(Bricks)
+```
+
+d. lag plot
+```{r}
+aus_production |> gg_lag(Bricks, geom = "point")
+```
+
+e. ACF and ACF plot
+Based on the lag plot and ACF, we can see there is a strong positive correlation in all lags, which provides further evidence for a trend in the time series. But, the autocorrelation coefficient decreases greatly with each lag, until it eventually dips below the significance level 38 quarters (9.5 years) into the time series. This tells us that past data may not be a good predictor of values at 10+ years into the future. The ACF plot also displays peaks at seasonal intervals (multiples of 4), providing more evidence for seasonality.
+```{r}
+aus_production |> ACF(Bricks)
+
+aus_production |> ACF(Bricks, lag_max = 48) |> autoplot()
+```
+
+3. `Hare` from `pelt`
+
+a. time plot
+Based on the time plot, we can see a strong cyclical pattern in this time series. There appears to be lull periods of about 3-5 years, then trading will shoot up and stay around there over the course of a few years.
+```{r}
+pelt |> autoplot(Hare)
+```
+
+b. seasonal plot
+
+
+c. subseries plot
+The seasonal and subseries plots don't appear to work with the pelt data, because the index is 1 year. I couldn't find a solution to this
+```{r}
+pelt |> gg_subseries(Hare)
+```
+
+d. lag plot
+The lag plots show us that there is a strong positive correlation in lag 1. That correlation diminishes with each lag, but seemingly retursn a bit after lag 8
+```{r}
+pelt |> gg_lag(Hare, geom = "point")
+```
+
+e. ACF and ACF plot
+ACF reveals that the autocorrelation coefficient ebbs and flows between positive and negative at an interval of about 3-5 lags. I'm not entirely sure, but I think this is evidence of a cyclic effect.
+```{r}
+pelt |> ACF(Hare)
+
+pelt |> ACF(Hare, lag_max = 40) |> autoplot()
+```
+
+4. `Cost` from `PBS`
+
+a. time plot
+In this time plot, we see a variety of behaviors depending on the group. Most of the groups don't appear to have a trend, but most appear to have seasonality and/or cyclic pattern.
+```{r}
+ho2 <- PBS |> 
+  filter(ATC2 == "H02")
+
+ho2 |> 
+  mutate(Cost = Cost / 1e3) |> 
+  autoplot(Cost) +
+  ylab("Cost (thousands)")
+```
+
+b. seasonal plot
+Again, we're seeing a variety of seasonal patterns. The Safety net group are fairly similar in that they peak in around Q3/Q4, but there yearly trends are different. the Co-payments group is more variant.
+```{r}
+ho2 |> 
+  mutate(Cost = Cost / 1e3) |> 
+  gg_season(Cost)
+```
+
+c. subseries plot
+The subseries plots further my previous analyses. Most of the plots display seasonality, albeit in a variety of ways.
+```{r}
+ho2 |> 
+  mutate(Cost = Cost / 1e3) |>
+  gg_subseries(Cost)
+```
+
+d. lag plot
+I realized I needed to adjust the dataset so that the key was just ATC2. After running the lag plot, I can see a strong positive trends for every lag. The correlation looks extra strong at the seasonal multiples.
+```{r}
+grouped_ho2 <- ho2 |> 
+  group_by(ATC2) |> 
+  summarise(Cost = sum(Cost)) |> 
+  ungroup()
+
+grouped_ho2 |> 
+  mutate(Cost = Cost / 1e3,
+         Quarter = yearquarter(Month)) |> 
+  as_tibble() |> 
+  group_by(Quarter, ATC2) |> 
+  summarise(Cost = sum(Cost)) |>
+  ungroup() |> 
+  as_tsibble(index = Quarter) |>  
+  gg_lag(Cost, geom = "point")
+
+```
+
+e. ACF and ACF plot
+The ACF plot shows us that the autocorrelation coefficient ebbs and flows from really high to really low positive correlation. I think this suggests a cyclic pattern.
+```{r}
+grouped_ho2 |> ACF(Cost)
+
+grouped_ho2 |> ACF(Cost) |> autoplot()
+```
+
+5. `Barrels` from `us_gasoline`
+
+a. time plot
+Based on the time plot, we can see the time series starts with an upward trend, then eventually plateaus. There also appears to be seasonality.
+```{r}
+us_gasoline |> autoplot(Barrels)
+```
+
+b. seasonality plot
+The seasonality plot looks like the barrels are lower in the fall/winter months and then build higher into the summer months. I decided to look at a monthly view to clear up some of the noise. This view is quite interesting, as there seems to be a consistent seasonality pattern of 2 month intervals.
+```{r}
+us_gasoline |> gg_season(Barrels)
+
+gas_month <- us_gasoline |> 
+  mutate(month = yearmonth(Week)) |> 
+  as_tibble() |> 
+  group_by(month) |> 
+  summarise(Barrels = sum(Barrels)) |> 
+  ungroup() |> 
+  as_tsibble(index = month)
+
+gas_month |> gg_season(Barrels)
+```
+
+c. subseries plot
+The subseries plot shows further evidence for seasonality. February looks interesting because it has a very different pattern from the other months. It mostly shoots up over the span of the time series and has several lull years where `Barrels` growth slows, then sharply drops before rising again.
+```{r}
+gas_month |> gg_subseries(Barrels)
+```
+
+d. lag plot
+```{r}
+us_gasoline |> gg_lag(Barrels, geom = "point")
+```
+
+e. ACF and ACF plot
+The lag plot and ACF show us that there is strong positive correlation across all the lags.
+```{r}
+us_gasoline |> ACF(Barrels)
+
+us_gasoline |> ACF(Barrels) |> autoplot()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

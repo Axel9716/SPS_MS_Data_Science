@@ -1,0 +1,695 @@
+---
+title: "Midterm Project: Part B"
+author: "Alex Ptacek"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+execute: 
+  warning: false
+  message: false
+---
+
+# Load Packages and Data
+
+```{r}
+library(tidyverse)
+library(fpp3)
+library(readxl)
+library(janitor)
+library(psych)
+library(mice)
+library(ggpubr)
+```
+
+
+```{r}
+power_data_raw <- read_excel("ResidentialCustomerForecastLoad-624.xlsx") |> 
+  clean_names()
+```
+
+
+# Data Tidying
+
+Initial view of the data shows that the date is in the incorrect format, so we will update that before making it a tsibble.
+
+```{r}
+power_data_raw |> 
+  print(n = 3)
+```
+
+
+```{r}
+power_data <- power_data_raw |> 
+  mutate(month = yearmonth(yyyy_mmm), .keep = "unused", .before = 3) |> 
+  tsibble(index = month)
+power_data |> print(n = 3)
+```
+
+We know that energy is a continuous variable that we are trying to produce time series forecasts for. If we check the `complete_case` variable for unique values, we'll find that we get the same amount of rows, so all the values are unique. Perhaps this is not a categorical variable that could help forecasts. To investigate, I first created an numeric sequence using the maximum and minimum values from `power_data`. I found, in fact, that our `complete_case` variable is a simple ordered sequence, possibly another index, so it won't be useful for this project.
+
+```{r}
+#Check for groups of case_sequence
+power_data |> 
+  count(case_sequence) |> 
+  print(n = 3)
+
+#Find max case_sequence value
+power_data |> arrange(desc(case_sequence)) |> head(1)
+
+#Create sample sequence for comparison
+test_seq <- seq(from = 733, to = 924, by = 1)
+
+identical(power_data$case_sequence, test_seq)
+
+```
+
+
+#### Check For Missing Values
+
+There is one missing value for `kwh`. It may only make up 0.5% of the data, but we still want to check for seasonality before removing or imputing the value. 
+
+```{r}
+power_data |> 
+  filter(is.na(kwh))
+```
+
+```{r}
+sum(is.na(power_data$month))
+```
+
+
+# Exploratory Data Analysis
+
+#### Visualizing Seasonality and Solving for NA Values
+
+My first impression of this time series is that it probably has a significant seasonal component, as well as some cyclic and trend behavior. There also appears to be an outlier value. The variance seems fairly constant, so I wouldn't consider applying a Box-Cox transformation to this time series.
+
+```{r}
+power_data |> 
+  autoplot(kwh)
+```
+
+The following seasonal and subseries plots show a consinstent seasonal pattern in the data, and the ACF plot shows highly significant autocorrelation at seasonal lags. Combined, this gives us clear evidence of an important seasonal component, so we will have to impute the missing `kwh` value. If do not impute the missing value, modeling of the data will articially change the seasonality, by pushing all the dates back, and inducing inaccuracies to our forecasts. We can begin choosing an imputation method by further analyzing the plots below. The seasonal plot shows us clearly that energy consumption consistently peaks in January, decreases until May, has another peak between July to September, then decreases until November. Since we found the month of the missing value to be September, we can look at the September subseries plot and see that the data has somewhat stable variance, so I feel very comfortable using seasonal mean imputation for this missing `kwh` value. Since it only makes up 0.5% of our data, we only need to make sure it doesn't effect our model.
+
+```{r}
+power_data |> 
+  gg_season(kwh) +
+  ggtitle("Seasonal Plot")
+
+subs_power <- power_data |> 
+  gg_subseries(kwh) +
+  ggtitle("Subseries Plot")
+subs_power
+
+power_data |> 
+  ACF(kwh, lag_max = 36) |> 
+  autoplot() +
+  ggtitle("ACF Plot")
+```
+
+```{r}
+# Find the mean kwh value for September
+avg_sep_power <- power_data |> 
+  tibble() |> 
+  filter(month(month) == 9) |> 
+  summarise(avg_sep_kwh = mean(kwh, na.rm = TRUE))
+avg_sep_power
+
+# Impute average September kwh for missing value
+power_data <- power_data |> 
+  mutate(kwh = ifelse(!is.na(kwh), kwh,
+                      avg_sep_power$avg_sep_kwh))
+```
+
+
+#### Resolve Outliers
+
+Similar to missing values, extreme outliers can wreak havoc on a prediction model, so we will have to treat it similarly. Observing the distribution below, we see further evidence of an outlier value. It's an extremely lower energy usage day, so it could be a blackout, a data entry or measurement error, etc. We can't predict these events with this data, since there is only one. In turn, it also doesn't give us information about "normal" energy consumption, but it can still have a large affect on the model and hinder our ability to predict normal energy consumption. We can gauge the magnitude of this outlier by seeing how far it is from the IQR of `kwh`.
+
+```{r}
+power_data |> 
+  ggplot(aes(x = kwh)) +
+  geom_histogram()
+```
+
+
+A standard and simple outlier detection method is finding values far away from the upper and lower quartiles of the data, and the typical threshold is 1.5*IQR. Plugging this in below, we see that the `kwh` value we've observed is included. That convinces me that it will be worth it to impute for this value before modeling.
+
+```{r}
+Q1 <- quantile(power_data$kwh, 0.25)
+Q3 <- quantile(power_data$kwh, 0.75)
+IQR_val <- IQR(power_data$kwh)
+
+# Define outlier bounds
+lower_bound <- Q1 - 1.5 * IQR_val
+upper_bound <- Q3 + 1.5 * IQR_val
+
+# Identify outliers
+outliers <- power_data$kwh[power_data$kwh < lower_bound | power_data$kwh > upper_bound]
+outliers
+```
+
+We already know the data is seasonal, so we can start by getting the month where the outlier occurred and examining the subseries plot. The missing value comes from July, which has a U-shaped pattern in the subseries plot. I think a decision tree model will do a good enough job of imputing in this data.
+
+```{r}
+power_data |> 
+  filter(kwh == outliers)
+
+subs_power
+```
+
+
+Im using the mice package, which applies a selected model to our data multiple times (5 here) and adjusts the parameters each time to introduce some random error. 
+
+```{r}
+set.seed(624)
+
+mice_power_data <- power_data |> 
+  mutate(kwh = ifelse(kwh == outliers, NA, kwh)) |> 
+  select(-case_sequence)
+```
+
+```{r} 
+mice_imp_data <- mice(mice_power_data, method = "cart") |> 
+  complete() |> 
+  tibble()
+```
+
+
+The plots below show a time series comparison of yearly energy consumption in July before and after imputation. After the imputation, the data looks much more normal. The imputed value looks like a reasonable fit, so I will replace the outlier with the imputed value for purposes of forecasting.
+
+```{r}
+outlier_plot <- power_data |>  
+  mutate(year = year(month)) |> 
+  filter(month(month) == 7) |> 
+  tsibble(index = year) |> 
+  autoplot(kwh) +
+  labs(title = "Yearly July Data", subtitle = "With Outlier")
+
+imp_plot <- mice_imp_data |> 
+  mutate(year = year(month)) |> 
+  filter(month(month) == 7) |> 
+  tsibble(index = year) |> 
+  autoplot(kwh) +
+  labs(title = "Yearly July Data", subtitle = "After Imputation")
+
+ggarrange(outlier_plot, imp_plot)
+```
+
+
+```{r}
+# Pull the date for our outlier value
+outlier_date <- power_data |> 
+  filter(kwh == outliers) |> 
+  pull(month)
+
+# Find imputed value at this data
+imp_value <- mice_imp_data |> 
+  filter(month == outlier_date) |> 
+  pull(kwh)
+
+# Replace outlier value with imputed value
+power_data <- power_data |> 
+  mutate(kwh = ifelse(kwh == outliers, imp_value, kwh))
+```
+
+
+# Modeling
+
+Since we've already determined this data has a strong seasonal component, I will use a seasonal naive model as a benchmark. I will also compare auto-generated ETS and ARIMA models.
+
+```{r}
+power_data |> 
+  autoplot(kwh)
+```
+
+Fable has auto-generated and ETS(M,N,A) and ARIMA(1,0,0)(2,1,0) with drift model. Next, we need to which model fits the data better, by using cross-validation.
+
+```{r}
+power_fit <- power_data |> 
+  model(snaive = SNAIVE(kwh),
+        ets = ETS(kwh),
+        arima = ARIMA(kwh))
+power_fit
+```
+
+
+To do cross-validation, we can use `stretch_tsibble` to create many training and test sets. Then, we can fit our models to all of the training sets and forecast for all of the test sets in one step. Lastly, we check the accuracy measures. The ARIMA model scored the best accuracy for the cross-validation test. This means the ARIMA model provided the best fit for our data. Therefore, I will select the ARIMA model for forecasting
+
+```{r}
+many_train <- power_data |> 
+  stretch_tsibble(.init = 100, .step = 1) |> 
+  filter(.id != max(.id))
+
+cv_fit <- many_train |> 
+  model(snaive = SNAIVE(kwh),
+        ets = ETS(kwh ~ error("M") + trend("N") + season("A")),
+        arima = ARIMA(kwh ~ 1 + pdq(1,0,0) + PDQ(2,1,0)))
+
+cv_fc <- cv_fit |> 
+  forecast(h = 1) |> 
+  filter(!is.na(.mean))
+
+accuracy(cv_fc, power_data)
+```
+
+
+# Forecasting and Final Results
+
+The forecast has very narrow prediction intervals and, overall, looks like a very reasonalable fit for the data.
+
+```{r echo=FALSE}
+power_fit |> 
+  forecast(h = 12) |> 
+  filter(.model == "arima") |> 
+  autoplot(power_data) +
+  labs(title = "Energy Comsumption Forecast for 2014", subtitle = "ARIMA(1,0,0)(2,1,0)")
+
+power_fit |> 
+  forecast(h = 12) |> 
+  filter(.model == "arima") |> 
+  autoplot(power_data |> filter(year(month) > 2010)) +
+  labs(title = "Energy Comsumption Forecast for 2014 (Zoomed in)", subtitle = "ARIMA(1,0,0)(2,1,0)")
+```
+
+
+#### Point Forecasts and Distributional Forecasts
+
+The table below can be used to deploy our forecasts. For example, if an electical company's revenue depends on energy consumption and they need to create a budget, they could use the point forecasts as a parameter to model their budget around.
+
+```{r echo=FALSE}
+power_fc_summary <- power_fit |> 
+  forecast(h = 12) |> 
+  filter(.model == "arima") |> 
+  hilo(level = 95) |> 
+  tibble() |> 
+  mutate(lower = `95%`$lower, upper = `95%`$upper,
+         month = as.character(month)) |> 
+  select(month, lower, pt_fc = .mean, upper)
+
+grand_totals <- power_fc_summary |> 
+  summarise(lower = sum(lower),
+            pt_fc = sum(pt_fc),
+            upper = sum(upper)) |> 
+  mutate(month = "Total", .before = 1)
+
+power_final_results <- rbind(power_fc_summary, grand_totals)
+power_final_results
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

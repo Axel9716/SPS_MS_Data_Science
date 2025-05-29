@@ -1,0 +1,534 @@
+---
+title: "APM Chapter 6 HW: Linear Regression and its Cousins"
+author: "Alex Ptacek"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+execute:
+  warning: false
+  message: false
+---
+
+
+```{r}
+library(tidyverse)
+library(caret)
+library(pls)
+library(elasticnet)
+library(lars)
+library(ggpubr)
+library(janitor)
+library(VIM)
+```
+
+
+6.2. Developing a model to predict permeability (see Sect. 1.4) could save significant resources for a pharmaceutical company, while at the same time more rapidly identifying molecules that have a sufficient permeability to become a drug:
+
+(a) Start R and use these commands to load the data:
+
+```{r}
+library(AppliedPredictiveModeling)
+data(permeability)
+```
+
+The matrix fingerprints contains the 1,107 binary molecular predictors for the 165 compounds, while permeability contains permeability response.
+
+
+(b) The fingerprint predictors indicate the presence or absence of substructures of a molecule and are often sparse meaning that relatively few of the molecules contain each substructure. Filter out the predictors that have low frequencies using the nearZeroVar function from the caret package. How many predictors are left for modeling?
+
+##### Answer: 388 predictors remain.
+
+```{r}
+fingerprints <- fingerprints |> 
+  data.frame() |> 
+  tibble()
+
+cols_to_remove <- nearZeroVar(fingerprints)
+  
+fp_reduced <- fingerprints |> 
+  select(-all_of(cols_to_remove)) |> 
+  tibble()
+fp_reduced |> print(n = 10)
+```
+
+
+(c) Split the data into a training and a test set, pre-process the data, and tune a PLS model. How many latent variables are optimal and what is the corresponding resampled estimate of R-squared?
+
+##### Answer: Based on lowest RMSE, 2 latent variables is optimal. The resampled estimate of R-squared is 50.4%, using 2 latent variables.
+
+i. Confirmed there are no missing values.
+
+```{r}
+na_counts <- sapply(fp_reduced, \(x) sum(is.na(x)))
+na_counts[na_counts > 0]
+```
+
+ii. Confirmed all variables are numeric.
+
+```{r}
+fp_reduced |> 
+  select(-where(is.numeric))
+```
+
+
+iii. Add permeability measurement to our data and take a random sample (80% of data) to use as the training set. Filter data to rows not contained in train set, in order to get our test set. Lastly, separate training set into predictors and outcome objects.
+
+```{r}
+set.seed(624)
+
+fp_reduced <- fp_reduced |> 
+  mutate(index = row_number())
+
+perm <- tibble(permeability = permeability)
+
+fp_reduced <- bind_cols(fp_reduced, perm)
+
+fp_train <- slice_sample(fp_reduced, prop = 0.8)
+
+fp_test <- fp_reduced |> 
+  filter(!index %in% fp_train$index) |> 
+  select(-index)
+
+fp_train <- fp_train |> 
+  select(-index)
+
+```
+
+```{r}
+fp_train_x <- fp_train |> 
+  select(-permeability)
+
+fp_train_y <- fp_train |> 
+  pull(permeability) |> 
+  as.vector()
+
+
+fp_test_x <- fp_test |> 
+  select(-permeability)
+
+fp_test_y <- fp_test |> 
+  select(permeability)
+  
+```
+
+iv. Tune and Preprocess PLS Model.
+
+```{r}
+ctrl <- trainControl(method = "cv", number = 10)
+
+pls_tune <- train(fp_train_x, fp_train_y,
+              method = "pls",
+              tuneLength = 20,
+              trControl = ctrl,
+              preProcess = c("center", "scale"))
+pls_tune
+```
+
+
+(d) Predict the response for the test set. What is the test set estimate of R-squared?
+
+##### Answer: The R-squared is 36%.
+
+```{r}
+pls_prediction <- predict(pls_tune, fp_test_x) |> 
+                    tibble() |> 
+                    select(pred_y = 1)
+
+pls_obs_pred_combined <- bind_cols(fp_test_y, pls_prediction) |> 
+                          select(obs = 1, pred = 2)
+
+defaultSummary(pls_obs_pred_combined)
+```
+
+
+(e) Try building other models discussed in this chapter. Do any have better predictive performance?
+
+##### Answer: No, the PLS model had the best RMSE and R-squared.
+
+i. Ridge Regression
+
+```{r}
+ridge_grid <- data.frame(.lambda = seq(0, .1, length = 15))
+
+ridge_tune <- train(fp_train_x, fp_train_y,
+              method = "ridge",
+              tuneGrid =  ridge_grid,
+              trControl = ctrl,
+              preProcess = c("center", "scale"))
+ridge_tune
+```
+
+```{r}
+ridge_prediction <- predict(ridge_tune, fp_test_x) |> 
+                    tibble() |> 
+                    select(pred_y = 1)
+
+ridge_obs_pred_combined <- bind_cols(fp_test_y, ridge_prediction) |> 
+                          select(obs = 1, pred = 2)
+
+defaultSummary(ridge_obs_pred_combined)
+```
+
+ii. Elastic Net
+
+```{r}
+ enet_grid <- expand.grid(.lambda = c(0, 0.01, .1),
+                         .fraction = seq(.05, 1, length = 20))
+
+enet_tune <- train(fp_train_x, fp_train_y,
+              method = "enet",
+              tuneGrid =  enet_grid,
+              trControl = ctrl,
+              preProcess = c("center", "scale"))
+enet_tune
+```
+
+```{r}
+enet_prediction <- predict(enet_tune, fp_test_x) |> 
+                    tibble() |> 
+                    select(pred_y = 1)
+
+enet_obs_pred_combined <- bind_cols(fp_test_y, enet_prediction) |> 
+                          select(obs = 1, pred = 2)
+
+defaultSummary(enet_obs_pred_combined)
+```
+
+
+(f) Would you recommend any of your models to replace the permeability laboratory experiment?
+
+##### Answer: I would recommend the PLS model because it has the best RMSE and R-squared. The diagnostic plots show some major issues with the interpretability of the model (e.g. heteroschodasticy in the reisdual plot), which could potentially be fixed with more data pre-processing, but it is still more accurate than the other predictors. Considering a modelled approach could save "significant resources", I would recommend this model.
+
+```{r}
+fp_full_x <-  fp_reduced |> select(-permeability)
+
+fp_full_y <- fp_reduced |> pull(permeability) |> as_vector()
+```
+
+
+```{r}
+pls_prediction <- predict(pls_tune, fp_full_x)
+
+pls_obs_vs_fitted <- tibble(obs = fp_reduced$permeability,
+                            fitted = pls_prediction) |> 
+                      mutate(resid = fitted - obs)
+
+
+
+pls_resid_plot <- ggplot(pls_obs_vs_fitted, aes(x = fitted, y = resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  xlab("Fitted values") +
+  ylab("Residuals")
+
+pls_obs_vs_fitted_plot <- ggplot(pls_obs_vs_fitted, aes(x = fitted, y = obs)) +
+  geom_point() +
+  xlab("Fitted values") +
+  ylab("Observed values")
+
+ggarrange(pls_resid_plot, pls_obs_vs_fitted_plot) |> 
+ annotate_figure(
+    top = text_grob("PLS Diagnostic Plots", size = 14))
+
+```
+
+
+
+6.3. A chemical manufacturing process for a pharmaceutical product was discussed in Sect. 1.4. In this problem, the objective is to understand the relationship between biological measurements of the raw materials (predictors), measurements of the manufacturing process (predictors), and the response of product yield. Biological predictors cannot be changed but can be used to assess the quality of the raw material before processing. On the other hand, manufacturing process predictors can be changed in the manufacturing process. Improving product yield by 1 % will boost revenue by approximately one hundred thousand dollars per batch:
+
+
+(a) Start R and use these commands to load the data:
+
+```{r}
+library(AppliedPredictiveModeling)
+data(ChemicalManufacturingProcess)
+
+chem_manu_process <- ChemicalManufacturingProcess |> 
+  as_tibble() |> 
+  clean_names()
+```
+
+The matrix processPredictors contains the 57 predictors (12 describing the input biological material and 45 describing the process predictors) for the 176 manufacturing runs. yield contains the percent yield for each run.
+
+
+(b) A small percentage of cells in the predictor set contain missing values. Use an imputation function to fill in these missing values (e.g., see Sect. 3.8).
+
+i. Examine columns with NA values.
+
+```{r}
+na_counts <- sapply(chem_manu_process, \(x) sum(is.na(x)))
+
+na_counts <- tibble(vars = names(na_counts),
+       na_counts = as.integer(na_counts)) |> 
+  filter(na_counts > 0)
+na_counts |> print(n = 5)
+
+missing_chem <- chem_manu_process |> 
+  select(all_of(na_counts$vars))
+```
+
+ii. Find predictors with greater than or equal to 0.99 correlation. These highly correlated predictors are candidates for a linear regression imputation.
+
+```{r}
+correlations <- cor(chem_manu_process, use = "pairwise.complete.obs")
+
+findCorrelation(correlations, cutoff = .99, names = TRUE)
+```
+
+iii. Visualize variables with high correlation. It looks like fitting a linear regression would be tricky, as there are outliers, we'll impute with knn.
+
+```{r}
+chem_manu_process |>
+  ggplot(aes(x = manufacturing_process20, y = manufacturing_process25)) +
+  geom_point()
+
+chem_manu_process |>
+  ggplot(aes(x = manufacturing_process20, y = manufacturing_process27)) +
+  geom_point()
+
+chem_manu_process |>
+  ggplot(aes(x = manufacturing_process25, y = manufacturing_process27)) +
+  geom_point()
+```
+
+
+iv. Use K-Nearest Neighbors (KNN) to Impute.
+
+```{r}
+imp_values <- kNN(missing_chem, imp_var = FALSE) |> as_tibble()
+
+imp_values |> as_tibble() |> 
+filter(if_any(everything(), is.na))
+```
+
+
+v. Add imputed values to data.
+
+```{r}
+chem_data_wip <- chem_manu_process |> 
+  select(-all_of(na_counts$vars)) |> 
+  bind_cols(imp_values)
+```
+
+
+(c) Split the data into a training and a test set, pre-process the data, and tune a model of your choice from this chapter. What is the optimal value of the performance metric?
+
+##### Answer: Using a PLS model, the optimal components is 14 and the R-squared is 61%.
+
+i.  Split data into train and test sets.
+
+```{r}
+chem_data_wip <- chem_data_wip |> 
+  mutate(index = row_number())
+
+
+chem_train <- slice_sample(chem_data_wip, prop = 0.8)
+
+chem_test <- chem_data_wip |> 
+  filter(!index %in% chem_train$index) |> 
+  select(-index)
+
+chem_train <- chem_train |> 
+  select(-index)
+
+```
+
+```{r}
+chem_train_x <- chem_train |> 
+  select(-yield)
+
+chem_train_y <- chem_train |> 
+  pull(yield) |> 
+  as.vector()
+
+
+chem_test_x <- chem_test |> 
+  select(-yield)
+
+chem_test_y <- chem_test |> 
+  select(yield)
+```
+
+
+ii. Preprocess and tune a model.
+
+```{r}
+ctrl <- trainControl(method = "cv", number = 10)
+
+pls_tune <- train(chem_train_x, chem_train_y,
+                  method = "pls",
+                  preProcess = c("center", "scale"),
+                  trControl = ctrl,
+                  tuneLength = 20)
+pls_tune
+```
+
+
+(d) Predict the response for the test set. What is the value of the performance metric and how does this compare with the resampled performance metric on the training set?
+
+##### Answer: RMSE and R-squared are much worse on the test set.
+
+```{r}
+pls_prediction <- predict(pls_tune, chem_test_x) |> 
+                    as_tibble()
+
+pls_obs_pred_combined <- bind_cols(chem_test_y, pls_prediction) |> 
+                          select(obs = 1, pred = 2)
+
+defaultSummary(pls_obs_pred_combined)
+```
+
+
+(e) Which predictors are most important in the model you have trained? Do either the biological or process predictors dominate the list?
+
+##### Answer: I've added up the coefficients for each predictor, to see which have the most overall weight in the model. This list is mostly dominated by process predictors.
+
+
+```{r}
+pls_coeffs <- pls_tune[["finalModel"]][["coefficients"]] |> as.data.frame() |> 
+  rownames_to_column() |> 
+  as_tibble() |> 
+  rename(predictor = rowname) |> 
+  pivot_longer(cols = 2:15, names_to = "component", values_to = "coefficient")
+
+
+top_preds_overall <- pls_coeffs |> 
+  group_by(predictor) |> 
+  summarise(sum_coeff = sum(coefficient)) |> 
+  arrange(desc(sum_coeff)) |> 
+  head(9)
+top_preds_overall
+```
+
+
+(f) Explore the relationships between each of the top predictors and the response. How could this information be helpful in improving yield in future runs of the manufacturing process?
+
+##### Answer: This info gives us the predictors which have the strongest relationship with yield. In this case, we know we can affect the process predictors, which coincidentally makes up most the top predictors. Therefore, the company can prioritize affecting these top process predictors to improve yield.
+
+
+```{r}
+pred_vs_yield_plots <- map(top_preds_overall$predictor, ~ {
+  ggplot(chem_data_wip, aes(x = .data[[.x]], y = yield)) +
+    geom_point()})
+
+ggarrange(plotlist = pred_vs_yield_plots)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
