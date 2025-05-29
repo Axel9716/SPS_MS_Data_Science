@@ -1,0 +1,588 @@
+---
+title: "Midterm Project: Part A"
+author: "Alex Ptacek"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+execute: 
+  warning: false
+  message: false
+---
+
+
+# Load Packages and Data
+
+```{r}
+library(tidyverse)
+library(fpp3)
+library(readxl)
+library(janitor)
+library(psych)
+library(mice)
+```
+
+```{r}
+atm_data_raw <- read_excel("ATM624Data.xlsx") |> 
+  clean_names() |> 
+  tsibble(key = atm, index = date)
+```
+
+# Data Tidying
+
+#### Checking Data Types
+
+Here, we see that the date is not in the correct type. The other variables, however, appear to have the correct type.
+
+```{r}
+atm_data_raw |> glimpse()
+```
+
+After some digging, I found that the dates were originally coming out decades ahead because excel reads times as days since 1899-12-30, while R's default origin is 1970-01-01. Therefore, we have to manually specify the correct time origin when converting the dates to the correct type.
+
+```{r}
+atm_data <- atm_data_raw |> 
+  mutate(date = as.Date(date, origin = "1899-12-30"))
+```
+
+#### Exploring Data Values and Missingness
+
+Below, we can see that we have 4 different ATMs with equal counts of complete observations, as well 14 NA `ATM` values and 19 NA `cash` values, but no missing dates.
+
+```{r}
+atm_data |> 
+  count(atm)
+```
+
+```{r}
+atm_data |> 
+  filter(is.na(date)) |> 
+  count()
+
+atm_data |> 
+  filter(is.na(cash)) |> 
+  count()
+```
+
+All of the NA ATM entries also don't have any `cash` values. Since this data gives us no information, we should be able to delete it. However, we must also check that it does not affect the completeness of the date sequence, because that could alter potential patterns and inhibit any model.
+
+```{r}
+atm_data |> 
+  filter(is.na(atm)) |> 
+  summarise(cash = sum(cash))
+```
+
+Here, I verify that all dates from start to end are included. Specifically, we want to check that removing the NA `ATM` and `cash` rows will result in a complete date sequence. To do this, I found the start and end date of the filtered atm data, then I created a sequence of daily dates with the same start and end. Lastly, I compared the two sequences and confirmed that the all ATMs have complete dates. Therefore, we can remove the NA ATM rows.
+
+```{r}
+#Find first and last date in data
+atm_data |> 
+  filter(!is.na(atm)) |> 
+  mutate(start = min(date), end = max(date)) |> 
+  count(start, end)
+
+#Create sequence of daily dates with same start and end
+expected_dates <- seq(from = as.Date("2009-05-01"), to = as.Date("2010-04-30"), by = "day")
+
+#Confirm date sequences match
+setdiff(expected_dates, atm_data |> filter(!is.na(atm)) |> pull(date))
+```
+
+```{r eval=FALSE}
+#Iterate Process for all ATMs
+atm_data |> 
+  filter(atm == "ATM1") |> 
+  mutate(start = min(date), end = max(date)) |> 
+  count(start, end)
+
+#Create sequence of daily dates with same start and end
+expected_dates <- seq(from = as.Date("2009-05-01"), to = as.Date("2010-04-30"), by = "day")
+
+#Confirm date sequences match
+setdiff(expected_dates, atm_data |> filter(atm == "ATM1") |> pull(date))
+
+
+atm_data |> 
+  filter(atm == "ATM2") |> 
+  mutate(start = min(date), end = max(date)) |> 
+  count(start, end)
+
+#Create sequence of daily dates with same start and end
+expected_dates <- seq(from = as.Date("2009-05-01"), to = as.Date("2010-04-30"), by = "day")
+
+#Confirm date sequences match
+setdiff(expected_dates, atm_data |> filter(atm == "ATM2") |> pull(date))
+
+atm_data |> 
+  filter(atm == "ATM3") |> 
+  mutate(start = min(date), end = max(date)) |> 
+  count(start, end)
+
+#Create sequence of daily dates with same start and end
+expected_dates <- seq(from = as.Date("2009-05-01"), to = as.Date("2010-04-30"), by = "day")
+
+#Confirm date sequences match
+setdiff(expected_dates, atm_data |> filter(atm == "ATM3") |> pull(date))
+
+atm_data |> 
+  filter(atm == "ATM4") |> 
+  mutate(start = min(date), end = max(date)) |> 
+  count(start, end)
+
+#Create sequence of daily dates with same start and end
+expected_dates <- seq(from = as.Date("2009-05-01"), to = as.Date("2010-04-30"), by = "day")
+
+#Confirm date sequences match
+setdiff(expected_dates, atm_data |> filter(atm == "ATM4") |> pull(date))
+```
+
+```{r}
+atm_data <- atm_data |> 
+  filter(!is.na(atm))
+```
+
+# Exploratory Data Analysis
+
+#### Further Exploration of Missing Values
+
+The remaining 5 NA `cash` values are coming from both ATM1 and ATM2, around the same time (June 2009). These values are unique days for each ATM, so removing any of them could affect greatly affect seasonal modeling. First, I will have to examine the seasonality of this data.
+
+```{r}
+missing_cash <- atm_data |> 
+  filter(is.na(cash) & !is.na(atm)) |> 
+  count(date, atm)
+missing_cash
+```
+
+The seasonal and subseries plots, below, gives us evidence that there is a seasonal component. Cash withdrawals appear to peak on Tuesday and trough on Wednesdays and Thursdays very consistently. Their seasonality does vary over time, however. Specifically, Wednesdays and Thursdays experienced increases in cash flow later in the time series, while we see some downward trends for Tuesday and Saturday over time. Lastly, the ACF is showing highly significant seasonal autocorrelation for ATMs 1 and 2. Therefore, we can assume that seasonality will be an important component for modeling. We will have to impute the missing `cash` values for the ATM1 and ATM2.
+
+```{r}
+seas_atm <- atm_data |> 
+  filter(atm == "ATM1" | atm == "ATM2") |> 
+  gg_season(cash, period = 7) +
+  ggtitle("Seasonal Plots")
+
+subs_atm <- atm_data |> 
+  filter(atm == "ATM1" | atm == "ATM2") |> 
+  gg_subseries(cash, period = 7) +
+  ggtitle("Subseries Plots")
+
+seas_atm
+subs_atm
+
+atm_data |> 
+  filter(atm == "ATM1" | atm == "ATM2") |>
+  ACF(cash, lag = 28) |> 
+  autoplot() +
+  ggtitle("ACF Plots")
+```
+
+To determine an appropriate method of imputation for the missing vales in ATM1 and ATM2, we can start by analyzing the subseries plots for the days that are missing `cash` values. We previously found which days these were. Based on the subseries plots for these days, I have decided to try a decision tree for imputing the data. Decision trees are well suited for these complex patterns, and the mice package iteratively and randomly adjusts the decision tree parameters, giving our imputations a realistic touch. Ultimately, these missing values make up a small percentage of the data and contain no information. We simply need realistic placeholder values that will not significantly affect our model.
+
+```{r}
+missing_cash |> 
+  mutate(day_name = weekdays(date))
+```
+
+```{r}
+set.seed(624)
+
+atm_mice <- atm_data |> 
+  mutate(day_of_week = as.factor(weekdays(date))) |> 
+  tibble()
+
+atm_mice <- split(atm_mice, atm_mice$atm)
+```
+
+```{r message=FALSE, output=FALSE}
+imputed_list <- lapply(atm_mice, function(x) {
+  mice(x, method = "cart", m = 5) |> 
+    complete() |> 
+    tibble() |> 
+    rename(cash_imp = cash)
+})
+
+mice_imp_data <- do.call(rbind, imputed_list)
+```
+
+
+We can compare the imputed values for ATMs 1 and 2 to the subseries plots and see that the new values fall reasonably within the data, so I will add the imputed values to our data.
+
+```{r}
+test <- atm_data |> 
+  left_join(mice_imp_data, by = join_by(date, atm))
+
+test |> 
+  filter(is.na(cash))
+
+subs_atm
+```
+
+```{r}
+atm_data <- atm_data |> 
+  left_join(mice_imp_data, by = join_by(date, atm)) |> 
+  mutate(cash = cash_imp) |> 
+  select(-cash_imp, -day_of_week)
+```
+
+#### Overall EDA cont.
+
+This time series has a year's worth of daily data, from May 2009 to April 2010. With the time series plot of all the data, we only get a decent look at ATM4. This ATM clearly has a much higher magnitude of cash flow then the other ATMs. ATM4's cash withdrawals have no trend, but there is possibly some seasonality. There is also an apparent outlier cash withdrawal in ATM4 (\$10,920) on 2/9/2010, which far exceeds the daily cash withdrawals of any other day.
+
+```{r}
+atm_data |> 
+  autoplot(cash)
+
+outlier_atm4 <- atm_data |> 
+  filter(cash > 9000)
+outlier_atm4
+```
+
+To test for outliers, we can perform a simple outlier detection method using the interquartile range. Since we are lacking domain knowledge, I want to use a large threshold, so we only detect absurdly variant outliers. Based on the code below, we have found that the previously observed value of \$10,919 is outside of this large threshold. Typically, more domain knowledge would help here, to understand the likelihood of this outlier occurring, or if the value itself tells us something important. However, this value is so large that one can assume this is either an error or an extremely unlikely event. Regardless, keeping this value in will hinder our model, so we will have to impute a new value.
+
+```{r}
+atm4_cash <- atm_data |> 
+  filter(atm == "ATM4") |> 
+  pull(cash)
+
+Q1 <- quantile(atm4_cash, 0.25)
+Q3 <- quantile(atm4_cash, 0.75)
+IQR_val <- IQR(atm4_cash)
+
+# Define outlier bounds
+lower_bound <- Q1 - 3 * IQR_val
+upper_bound <- Q3 + 3 * IQR_val
+
+# Identify outliers
+outliers <- atm4_cash[atm4_cash < lower_bound | atm4_cash > upper_bound]
+outliers
+```
+
+Similar to the process with our missing values, we can start by looking at the subseries plot (excluding the outlier value, so that we can better analyze the visualization). The subseries plot of Tuesday for ATM4 is stationary (i.e. no trend; constant variance), so I will impute the mean for the outlier value. This will work well enough, because this one value makes up such a small percentage of the total data. We simply need a reasonable placeholder value, otherwise the outlier can potentially have drastic effects on our model and induce inaccuracies.
+
+**\*\* It is important to note here that all imputations are not meant to permanently rewrite the data. These imputations temporarily fill in small gaps of information that result from the weird/unfriendly data values we have observed. Ultimately, this helps us create more robust models.**
+
+```{r}
+outlier_atm4 |> 
+  mutate(day_of_week = weekdays(date))
+
+atm_data |> 
+  filter(atm == "ATM4") |> 
+  mutate(cash = ifelse(cash > 9000, NA, cash)) |> 
+  gg_subseries(cash, period = 7)
+```
+
+```{r}
+atm_data |> 
+  mutate(day_of_week = weekdays(date)) |> 
+  filter(day_of_week == "Tuesday" & atm == "ATM4") |>
+  tibble() |> 
+  group_by(atm) |> 
+  summarise(avg_cash = mean(cash))
+
+atm_data <- atm_data |> 
+  mutate(cash = ifelse(cash > 9000, 647, cash))
+```
+
+
+#### EDA cont.
+
+By filtering out ATM4 we get a better look at the cash flow of other ATMs. ATM1 and ATM2 seem to have a similar erratic pattern to ATM4, but there are no apparent outliers. ATM3 only had 3 days of withdrawals at the end of the time series.
+
+```{r}
+atm_data |> 
+  filter(atm != "ATM4") |> 
+  autoplot(cash)
+
+atm_data |> 
+  filter(atm == "ATM3" & cash > 0)
+```
+
+Here, we get a more granular look at the magnitude of cashflow at each ATM. Again, we see that ATM3 is mostly 0s, while ATM4 tends to have much higher cash withdrawals. Additionally, ATM1 has higher cash flow than ATM2, but they are very similar relative to the other ATMs. ATM3 has very few data points, so we can't make a useful model for it. Therefore, we can remove ATM3 from the data.
+
+```{r}
+describe(atm_data$cash)
+
+atm_data |> 
+  filter(atm == "ATM1") |> 
+  pull(cash) |> 
+  summary()
+
+atm_data |> 
+  filter(atm == "ATM2") |> 
+  pull(cash) |> 
+  summary()
+
+atm_data |> 
+  filter(atm == "ATM3") |> 
+  pull(cash) |> 
+  summary()
+
+atm_data |> 
+  filter(atm == "ATM4") |> 
+  pull(cash) |> 
+  summary()
+```
+
+
+```{r}
+atm_data <- atm_data |> 
+  filter(atm != "ATM3")
+```
+
+
+With our adjusted data, we can learn a few more things using seasonal, subseries, and ACF plots. ATM1 and ATM2 have more pronounced seasonality, while ATM4 has much more seasonal variance, so it's hard to observe any consistent seasonality. In the subseries plot, we can further observe this high variance at each seasonal interval. Lastly, the ACF is showing highly significant seasonal autocorrelation for ATMs 1 and 2. ATM4's seasonal autocorrealtion is much less pronounced, but still looks significant. Combining all this information, I believe decomposition will be an important part of modeling this data. I will have to experiment with ATM4.
+
+```{r}
+gg_season(atm_data, cash, period = 7)
+gg_subseries(atm_data, cash, period = 7)
+
+ACF(atm_data, cash, lag_max = 14) |> autoplot()
+```
+
+
+# Modeling
+
+Before modeling time series with multiple keys, I find it help to use `pivot_wider`, so we don't have the filter our key for every model.
+
+```{r}
+atm_data_wide <- atm_data |> 
+  pivot_wider(id_cols = date, names_from = atm, values_from = cash) |> 
+  clean_names()
+```
+
+#### Assessing model conditions
+
+Since the data looks stationary, aside from seasonality, I want to try an ARIMA model. First, I will use a kpss test to determine if seasonal differencing is needed. ATMs 1 and 2 need a seasonal difference, but ATM4 does not.
+
+```{r}
+atm_data_wide |> 
+  features(atm1, unitroot_nsdiffs)
+
+
+atm_data_wide |> 
+  features(atm2, unitroot_nsdiffs)
+
+atm_data_wide |> 
+  features(atm4, unitroot_nsdiffs)
+
+```
+
+Now, I will try to manually diagnose ARMA parameters for each time series. Looking at the ACF and PACF comparison, we see the PACF slowly decreasing in significance at seasonal lags, while the ACF peaks once at the first seasonal lag, and everything after is insignificant. Therefore, we can suggest using an MA(0)(1) model, where the 1 represents the first seasonal lagged error, which will be used as a predictor. ATM2 has similar ACF and PACF, so I will experiment with the same model. ATM4 looks more ambiguous, so I will rely on fable to determine the parameters. Also, note here that after differencing, all data looks sufficiently stationary
+
+```{r}
+atm_data_wide |> 
+  gg_tsdisplay(difference(atm1, 7), plot_type = "partial") +
+  ggtitle("ATM1")
+
+atm_data_wide |> 
+  gg_tsdisplay(difference(atm2, 7), plot_type = "partial") +
+  ggtitle("ATM2")
+
+atm_data_wide |> 
+  gg_tsdisplay(atm4, plot_type = "partial") +
+  ggtitle("ATM4")
+```
+
+
+#### Model Evaluataion
+
+As a benchmark model, I am using using STL, an additive decomposition, to model the seasonal component, and Mean for the seasonally adjust component. I am also auto-generating ARIMA models for all ATMs. Lastly, for ATMs 1 and 2, I am manually selecting an ARIMA based on the analysis above. Fable has auto-generated an ARIMA(0,0,1)(0,1,2) for ATM1; ARIMA(2,0,2)(0,1,1) for ATM2; and ARIMA(3,0,2)(1,0,0) with mean for ATM4.
+
+```{r}
+atm1_fit <- atm_data_wide |> 
+  model(mean_atm1 = decomposition_model(STL(atm1), MEAN(season_adjust)),
+        manual_arima_atm1 = ARIMA(atm1 ~ pdq(0,0,0) + PDQ(0,1,1)),
+        auto_arima_atm1 = ARIMA(atm1))
+atm1_fit
+
+atm2_fit <- atm_data_wide |> 
+  model(mean_atm2 = decomposition_model(STL(atm2), MEAN(season_adjust)),
+        manual_arima_atm2 = ARIMA(atm2 ~ pdq(0,0,0) + PDQ(0,1,1)),
+        auto_arima_atm2 = ARIMA(atm2))
+atm2_fit
+
+atm4_fit <- atm_data_wide |> 
+  model(mean_atm4 = decomposition_model(STL(atm4), MEAN(season_adjust)),
+        auto_arima_atm4 = ARIMA(atm4))
+atm4_fit
+```
+
+
+Next, it is important compare conditions and accuracy measures for our models. Based on AICc, the auto-generated models beat out the manual models for ATMs 1 and 2. Additionally, the residual diagnostics plots show that all of our models meet residual conditions (i.e. uncorrelated, constant variance, normally distributed). Since we are only testing one ARIMA model for ATM4, we cannot compare AICc.
+
+```{r}
+glance(atm1_fit |> select(manual_arima_atm1, auto_arima_atm1))
+gg_tsresiduals(atm1_fit |> select(manual_arima_atm1)) + ggtitle("ATM1 Manual ARIMA")
+gg_tsresiduals(atm1_fit |> select(auto_arima_atm1)) + ggtitle("ATM1 Auto ARIMA")
+
+glance(atm2_fit |> select(manual_arima_atm2, auto_arima_atm2))
+gg_tsresiduals(atm2_fit |> select(manual_arima_atm2)) + ggtitle("ATM2 Manual ARIMA")
+gg_tsresiduals(atm2_fit |> select(auto_arima_atm2)) + ggtitle("ATM2 Auto ARIMA")
+
+gg_tsresiduals(atm4_fit |> select(auto_arima_atm4)) + ggtitle("ATM4 Auto ARIMA")
+```
+
+#### Model Estimation
+
+In this section, it's time to test the forecast accuracy of our models. To do this, we create training sets of our data (leaving the test set), fit our specified models to this training data, then test the accuracy of the of our models on the test data.
+
+```{r}
+many_train <- atm_data_wide |> 
+  stretch_tsibble(.init = 300, .step = 1) |> 
+  filter(.id != max(.id))
+```
+
+```{r}
+atm1_stretch_fit <- many_train |> 
+  model(mean_atm1 = decomposition_model(STL(atm1), MEAN(season_adjust)),
+        manual_arima_atm1 = ARIMA(atm1 ~ pdq(0,0,0) + PDQ(0,1,1)),
+        auto_arima_atm1 = ARIMA(atm1 ~ 0 + pdq(0,0,1) + PDQ(0,1,2)))
+
+atm2_stretch_fit <- many_train |> 
+  model(mean_atm2 = decomposition_model(STL(atm2), MEAN(season_adjust)),
+        manual_arima_atm2 = ARIMA(atm2 ~ pdq(0,0,0) + PDQ(0,1,1)),
+        auto_arima_atm2 = ARIMA(atm2 ~ pdq(2,0,2) + PDQ(0,1,1)))
+
+atm4_stretch_fit <- many_train |> 
+  model(mean_atm4 = decomposition_model(STL(atm4), MEAN(season_adjust)),
+        auto_arima_atm4 = ARIMA(atm4 ~ 1 + pdq(3,0,2) + PDQ(1,0,0)))
+```
+
+
+The below code computes our forecasts for ATMs 1 and 2, and checks our accuracy measures on the test sets. We'll come back to ATM4 later. Interestingly, the tables have turned and our manually selected ARIMA model seems to have better accuracy, based on MASE. As a final diagnostic, let's compare visualizations for a full month forecast, to choose the forecast that looks more reasonable.
+
+```{r}
+atm1_fc <- atm1_stretch_fit |> 
+  forecast()
+
+accuracy(atm1_fc, atm_data_wide)
+
+
+atm2_fc <- atm2_stretch_fit |> 
+  forecast()
+
+accuracy(atm2_fc, atm_data_wide)
+```
+
+The forecast visualizations for ATM1 look quite different. The manual ARIMA has narrower prediction intervals and retains a more reasonable variance throughout the month's worth of forecast, whereas the auto-generated model smooths out very quickly. Overall, I prefer the manually generated ARIMA model, because it had lower MASE in testing and it is a simpler model, which is more interpretable in a real-world setting.
+
+```{r}
+atm1_fit |> 
+  select(manual_arima_atm1) |> 
+  forecast(h = 31) |> 
+  autoplot(atm_data_wide |> filter(year(date) > 2009)) +
+  ggtitle("ATM1 Manual ARIMA(0,0,0)(0,1,1)")
+
+atm1_fit |> 
+  select(auto_arima_atm1) |> 
+  forecast(h = 31) |> 
+  autoplot(atm_data_wide |> filter(year(date) > 2009)) +
+  ggtitle("ATM1 Auto ARIMA(0,0,1)(0,1,2)")
+```
+
+
+Visualizations for ATM2 forecasts show very similar forecasts. Combined with the fact that the manual model had lower MASE, I will choose the manual model. Again, it is also a simpler model, which is preferable.
+
+```{r}
+atm2_fit |> 
+  select(manual_arima_atm2) |>  
+  forecast(h = 31) |> 
+  autoplot(atm_data_wide |> filter(year(date) > 2009)) +
+  ggtitle("ATM2 Manual ARIMA(0,0,0)(0,1,1)")
+
+atm2_fit |> 
+  select(auto_arima_atm2) |> 
+  forecast(h = 31) |> 
+  autoplot(atm_data_wide |> filter(year(date) > 2009)) +
+  ggtitle("ATM2 Auto ARIMA(2,0,2)(0,1,1)")
+```
+
+
+Coming back to ATM4 modeling, our ARIMA model beat our benchmark model, in terms of the MASE accuracy measure, so we will select the auto-generated ARIMA model for ATM4.
+
+```{r}
+atm4_fc <- atm4_stretch_fit |> 
+  forecast()
+
+accuracy(atm4_fc, atm_data_wide)
+```
+
+```{r}
+atm4_fit |> 
+  select(auto_arima_atm4) |> 
+  forecast(h = 31) |>
+  autoplot(atm_data_wide |> filter(year(date) > 2009)) +
+  ggtitle("ATM4 Auto ARIMA(3,0,2)(1,0,0)")
+  
+```
+
+
+# Final Results
+
+Finally, we can deploy our forecasts. First, we generate forecasts for the month of May 2010 (31 days) using our specified model for each ATM, and pull our distributional forecast and point forecast. Then, we can create a table to examine our combined and individual forecasts.
+
+```{r}
+atm1_fc <- atm1_fit |> 
+  select(manual_arima_atm1) |> 
+  forecast(h = 31) |> 
+  hilo(level = 95) |> 
+  mutate(lower = `95%`$lower, upper = `95%`$upper) |> 
+  tibble() |> 
+  mutate(atm = "ATM1") |> 
+  select(date, atm, lower, pt_fc = .mean, upper)
+
+atm2_fc <- atm2_fit |> 
+  select(manual_arima_atm2) |> 
+  forecast(h = 31) |> 
+  hilo(level = 95) |> 
+  mutate(lower = `95%`$lower, upper = `95%`$upper) |> 
+  tibble() |> 
+  mutate(atm = "ATM2") |> 
+  select(date, atm, lower, pt_fc = .mean, upper)
+
+atm4_fc <- atm4_fit |> 
+  select(auto_arima_atm4) |> 
+  forecast(h = 31) |> 
+  hilo(level = 95) |> 
+  mutate(lower = `95%`$lower, upper = `95%`$upper) |> 
+  tibble() |> 
+  mutate(atm = "ATM4") |> 
+  select(date, atm, lower, pt_fc = .mean, upper)
+
+combined_forecasts <- rbind(atm1_fc, atm2_fc, atm4_fc)
+
+atm_fc_summary <- combined_forecasts |> 
+  group_by(atm) |> 
+  summarise(lower = sum(lower),
+            pt_fc = sum(pt_fc),
+            upper = sum(upper)) 
+
+grand_totals <- atm_fc_summary |> 
+  summarise(lower = sum(lower),
+            pt_fc = sum(pt_fc),
+            upper = sum(upper)) |> 
+  mutate(atm = "Total", .before = 1)
+
+atm_final_results <- rbind(atm_fc_summary, grand_totals)
+```
+
+#### ATM Forecasts for May 2010
+
+Using the table below, we can deploy our forecasts into the real world. For example, if a person is in charge of making sure ATM1 doesn't run out of cash for customers to withdraw in May, they can stock $6,333 and be 95% confident that ATM1 will not run out of cash (assuming no external deposits). An important caveat here is that the lower bounds of our prediction intervals tend to fall into negative territory, but it is not possible to have negative withdrawals (assuming this does not factor deposits). Therefore, 0 is actually the lower bounds for those prediction intervals.
+
+```{r echo=FALSE}
+atm_final_results
+``` 
+
+
+
+
+
+
+
+
+
+
+
+

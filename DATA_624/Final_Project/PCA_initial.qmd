@@ -1,0 +1,298 @@
+---
+title: "Final Project - PCA"
+author: "AP"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(ggpubr)
+library(caret)
+```
+
+# 1. Objective and Rationale
+
+Following the exploratory data analysis (EDA), we employed Principal Component Analysis (PCA) as a dimensionality reduction technique to better understand the structure of the predictor space and to address potential multicollinearity among variables. This will also give us our first glimpse at important predictors and related predictors, and we may recognize these patterns in our models, as well.
+
+Given that the final modeling objective is to predict pH, PCA was applied strictly to the predictor variables (i.e., the input features), with the target variable excluded during the transformation phase.
+
+# 2. Methodology
+
+The PCA was conducted using the caret and tidyverse packages in R. The procedure included the following key steps:
+
+Data Preparation: All non-numeric variables were excluded. Only numeric predictors were retained for PCA.
+
+Standardization: Each feature was centered and scaled to unit variance to ensure that PCA was not biased toward features with larger scales.
+
+PCA Transformation: Principal components were extracted from the standardized predictor matrix.
+
+Component Retention: The number of components to retain was informed by a combination of the Kaiser criterion (eigenvalues \> 1), cumulative variance explained, and visual inspection via a scree plot.
+
+```{r}
+# Load data
+data <- read_excel("StudentData.xlsx")
+
+# Extract only numeric predictors, exclude target
+predictors <- data %>%
+  select(-PH) %>%
+  select(where(is.numeric))
+
+# Preprocess: standardize and apply PCA
+pca_prep <- preProcess(predictors, method = c("YeoJohnson", "center", "scale",
+                                              "medianImpute"))
+
+# Transform data using PCA
+processed_data <- predict(pca_prep, predictors)
+
+```
+
+```{r}
+# Step 4: Perform PCA
+pca_result <- prcomp(processed_data, center = FALSE, scale. = FALSE)
+
+# Step 5: Scree plot
+var_explained <- summary(pca_result)$importance[2,]
+# Create the scree plot data frame
+scree_df <- data.frame(
+  PC = factor(paste0("PC", 1:length(var_explained)), levels = paste0("PC", 1:length(var_explained))),
+  Variance = var_explained
+)
+
+# Filter for only the first 20 components
+scree_df <- scree_df[1:20, ]
+
+# Plot
+ggplot(scree_df, aes(x = PC, y = Variance)) +
+  geom_smooth(aes(group = 1), color = "darkred", linewidth = 1, se = FALSE) +
+  ggtitle("Scree Plot") +
+  xlab("Principal Components") +
+  ylab("Proportion of Variance Explained") +
+  theme_minimal()
+
+
+# Step 6: Choose components based on elbow in scree plot
+# For example, select first 3 components
+loadings <- pca_result$rotation[, 1:3]
+print(round(loadings, 3))
+```
+
+# 3. Results and Interpretation
+
+Variance Explained The PCA transformation resulted in a series of orthogonal components that capture the variance in the original feature space. The cumulative variance explained by the principal components is shown below:
+
+```{r}
+pca_prep$std^2/sum(pca_prep$std^2)*100
+
+head(pca_prep$x[, 1:5])
+
+# Extract variance explained
+var_explained <- pca_prep$std^2
+cumulative_variance <- cumsum(var_explained / sum(var_explained))
+
+# Print table
+tibble(
+  PC = paste0("PC", seq_along(cumulative_variance)),
+  Variance = round(var_explained / sum(var_explained), 3),
+  Cumulative = round(cumulative_variance, 3)
+)
+```
+
+From this output, we observe that:
+
+The first few components capture a substantial portion of the total variance.
+
+For example, the first 5–7 components typically explain 80–95% of the cumulative variance (exact values will depend on your data).
+
+This dimensionality reduction is significant given that the original predictor space may contain many more features.
+
+Scree Plot A scree plot was generated to visually inspect the point of diminishing returns, or the "elbow", in the variance explained:
+
+```{r}
+# Scree plot
+qplot(
+  x = seq_along(var_explained),
+  y = var_explained / sum(var_explained),
+  geom = "line"
+) +
+  labs(
+    title = "Scree Plot of Principal Components",
+    x = "Principal Component",
+    y = "Proportion of Variance Explained"
+  ) +
+  theme_minimal()
+```
+
+This plot helps determine the optimal number of PCs to retain. Components beyond the elbow contribute marginally to the variance and may be excluded from further modeling.
+
+# 4. Loadings and Interpretability
+
+The rotation matrix provides the loadings of each original variable on the principal components. Loadings close to ±1 indicate strong influence, while values near 0 indicate minimal contribution.
+
+```{r}
+# Loadings (rotation matrix)
+loadings <- pca_prep$rotation
+head(loadings)
+```
+
+```{r}
+pc1 <- loadings |> 
+  as.data.frame() |> 
+  rownames_to_column(var = "Predictor1") |> 
+  as_tibble() |> 
+  mutate(total_top_3 = PC1 + PC2 + PC3,
+         total_top_5 = PC1 + PC2 + PC3 + PC4 + PC5,
+         total_top_8 = PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8) |> 
+  arrange(desc(PC1)) |> 
+  head(10) |> 
+  select(1:2)
+
+pc2 <- loadings |> 
+  as.data.frame() |> 
+  rownames_to_column(var = "Predictor2") |> 
+  as_tibble() |> 
+  mutate(total_top_3 = PC1 + PC2 + PC3,
+         total_top_5 = PC1 + PC2 + PC3 + PC4 + PC5,
+         total_top_8 = PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8) |> 
+  arrange(desc(PC2)) |> 
+  head(10) |> 
+  select(1,3)
+
+pc3 <- loadings |> 
+  as.data.frame() |> 
+  rownames_to_column(var = "Predictor3") |> 
+  as_tibble() |> 
+  mutate(total_top_3 = PC1 + PC2 + PC3,
+         total_top_5 = PC1 + PC2 + PC3 + PC4 + PC5,
+         total_top_8 = PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8) |> 
+  arrange(desc(PC3)) |> 
+  head(10) |> 
+  select(1, 4)
+
+pc4 <- loadings |> 
+  as.data.frame() |> 
+  rownames_to_column(var = "Predictor4") |> 
+  as_tibble() |> 
+  mutate(total_top_3 = PC1 + PC2 + PC3,
+         total_top_5 = PC1 + PC2 + PC3 + PC4 + PC5,
+         total_top_8 = PC1 + PC2 + PC3 + PC4 + PC5 + PC6 + PC7 + PC8) |> 
+  arrange(desc(PC4)) |> 
+  head(10) |> 
+  select(1, 5)
+
+bind_cols(pc1, pc2, pc3, pc4) |> 
+  arrange(Predictor1, Predictor2, Predictor3, Predictor4) |> 
+  view()
+  as_tibble()
+```
+
+By examining the loading structure:
+
+We can interpret PC1 as a linear combination emphasizing variables A, B, and C
+
+Components with clear thematic groupings (e.g., all chemistry variables, or all environmental sensors) enhance interpretability and may suggest latent structures in the data.
+
+
+
+
+
+
+
+
+## PCA Study
+We employed Principal Component Analysis (PCA) as a dimensionality reduction technique to better understand the structure of the predictor space and to address potential multicollinearity among variables. This will also give us our first glimpse at important predictors and related predictors, and we may recognize these patterns in our models, as well.
+
+Given that the final modeling objective is to predict pH, PCA was applied strictly to the predictor variables (i.e., the input features), with the target variable excluded during the transformation phase.
+
+### Methodology
+
+The PCA was conducted using the caret and tidyverse packages in R. The procedure included the following key steps:
+
+1. Standardization: Each feature was Yeo-Johnson transformed and center-scaled to unit variance to ensure that PCA was not biased toward features with larger scales.
+
+```{r}
+# Exclude target
+predictors <- train_data_pp |> 
+  select(-PH) |> 
+  select(where(is.numeric))
+
+# Preprocess: transform and standardize
+predictors_prep <- preProcess(predictors, 
+                              method = c("YeoJohnson", "center",
+                                         "scale", "medianImpute"))
+
+# Transform data using PCA
+processed_data <- predict(predictors_prep, predictors)
+```
+
+2. PCA Transformation: Principal components were extracted from the standardized predictor matrix.
+
+```{r}
+# Perform PCA
+pca_result <- prcomp(processed_data, center = FALSE, scale. = FALSE)
+```
+
+3. Component Retention: The number of components to retain was informed by a combination of cumulative variance explained and visual inspection via a scree plot.
+
+```{r}
+# Extract the variance explained from the PCA model
+var_explained <- summary(pca_result)$importance[2,]
+
+# Create the scree plot data frame. Need to factor PCs so they populate the
+# plot correctly
+scree_df <- data.frame(
+  PC = factor(paste0("PC", 1:length(var_explained)), levels = paste0("PC", 1:length(var_explained))),
+  Variance = var_explained
+)
+
+# Filter to simplify visualization
+scree_df_small <- scree_df[1:15, ]
+
+# Plot
+ggplot(scree_df_small, aes(x = PC, y = Variance)) +
+  geom_smooth(aes(group = 1), color = "darkblue", linewidth = 1, se = FALSE) +
+  ggtitle("Scree Plot") +
+  xlab("Principal Components") +
+  ylab("Proportion of Variance Explained") +
+  theme_minimal()
+```
+
+### Results and Interpretation
+
+We can analyze the graph above as a heuristic approach for determining the number of Principle Components to keep. The proportion of variance explained starts to taper off at PC6, so we would consider the first five PCs as the most important for modeling. Components beyond this contribute marginally to the variance. Furthermore, we can examine the cumulative variance for each PC we add.
+
+```{r}
+cumulative_variance <- summary(pca_result)$importance[3,]
+
+scree_df$Cumulative_Variance <- cumulative_variance
+
+# Print table
+scree_df |>
+  as_tibble() |> 
+  filter(row_number() < 16) |> 
+  kable()
+```
+
+From this output, we observe that:
+
+The first few components capture a substantial portion of the total variance.
+
+### Loadings and Interpretability
+
+The rotation matrix provides the loadings of each original variable on the principal components. Loadings close to ±1 indicate strong influence, while values near 0 indicate minimal contribution.
+
+```{r}
+pca_result$rotation[,1:5] |> 
+  as.data.frame() |> 
+  arrange(desc(abs(PC1)))
+```
+
+By examining the loading structure:
+
+We can interpret PC1 as a linear combination emphasizing variables such as `Alch Rel` `Balling` and `Density`.
+
+Components with clear thematic groupings (e.g., all chemistry variables, or all environmental sensors) enhance interpretability and suggest latent structures in the data.

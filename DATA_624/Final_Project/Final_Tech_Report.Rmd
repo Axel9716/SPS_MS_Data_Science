@@ -1,0 +1,800 @@
+---
+title: "Project 2: Team Assignment"
+date: last-modified
+author:
+  - Alex Ptacek
+  - Amanda Knudsen
+  - Curtis Elsasser
+  - Yana Rabkova
+format:
+  html:
+    embed-resources: true
+    toc: true
+---
+
+
+## Assignment
+ABC Beverage is conducting an internal review of its manufacturing process with a focus on understanding the factors that influence product pH levels. This technical report highlights our team's data science-driven approach to modeling and predicting pH using historical production data.
+
+To achieve this, we analyzed the dataset provided by ABC Beverage, performed data cleaning and exploratory analysis, and evaluated several models. These included linear and nonlinear regressions, decision trees, random forests, and more. Through the report we will outline our methodology, modeling process, evaluation strategy, and the final model selected for predicting pH levels.
+
+
+## Setup
+```{r setup, echo=TRUE, results='hide', warning=FALSE, message=FALSE}
+library(corrplot)
+library(caret)
+library(earth)
+library(e1071)
+library(Formula)
+library(GGally)
+library(ggpubr)
+library(glmnet)
+library(glue)
+library(janitor)
+library(knitr)
+library(Metrics)
+library(plotmo)
+library(plotrix)
+library(pls)
+library(RANN)
+library(randomForest)
+library(readr)
+library(readxl)
+library(rpart)
+library(rpart.plot)
+library(tidyverse)
+```
+
+## Load the Data
+First we must load the data. We have been provided two datasets. We presumed that one was designated for training ("StudentData.xlsx") and the other for testing ("StudentEvaluation.xlsx"). But, we found "StudentEvaluation.xlsx" does not have target variable values. So, we concluded that "StudentData.xlsx" is for both training and testing and that "StudentEvaluation.xlsx" is for our final prediction.
+
+```{r}
+train_data <- read_excel("StudentData.xlsx")
+test_data <- read_excel("StudentEvaluation.xlsx")
+```
+
+## EDA
+George Hagstrom, our professor of DATA 607, defined exploratory data analysis as "...the art of looking at data in a systematic way in order to understand the the underlying structure of the data. It has two main goals: ensure data quality and uncover patterns to guide future analysis. EDA is detective work: you ask and answer questions, which inspires more questions." And that is exactly what we will do. We are going to get to know our dataset\[s\] by summarizing it, scrutinizing it, looking at it's correlation properties, and visualizing it.
+
+
+### Summary Information
+We will take a look at a sample of the data. We shall also examine our data's columns and types, the number of rows and columns, and the first few rows of the data. And finally, we will calculate some summary statistics: the mean, median, min, max, and standard deviation of each column so that we may better understand the nature of our data.
+```{r}
+head(train_data)
+```
+
+```{r}
+str(train_data)
+```
+
+We can see there are 33 columns in total and 2,571 rows in total. The 33 columns includes the "PH" column which is what we will be aiming to predict -- PH will be the response variable in our linear regression exploration.
+
+We can see that we have mostly numeric values. The only character or categorical (non-numeric) is the `Brand Code`. Based on information in our team's preferred guidance, by Max Kuhn and Kjell Johnson, on predictive modeling, to deal with non-numeric values (a.k.a. categorical values, of which Brand Code is the only one) the recommendation is to either convert into dummy variables or remove if not informative or the value has too many categories. We have found that it has significant importance in some of our models, we will convert it to a dummy variable before training (since models such as Lasso requires input predictors to be numeric).
+
+We can also see that there are negative values which means we won't be able to apply the BoxCox method for processing our data. Our guidance and standards, from Applied Predictive Modeling, state that if the data includes negatives we should use the YeoJohnson method instead.
+
+We will also take a look at the summary statistics of our data. We would normally use the `summary()` function, but it prints wide and not long and does not present well. So, we are going to take a stick shift approach.
+```{r}
+df <- select(train_data, -`Brand Code`)
+data.frame(
+  mean = sapply(df, mean, na.rm = TRUE) |> round(3),
+  median = sapply(df, median, na.rm = TRUE) |> round(3),
+  min = sapply(df, min, na.rm = TRUE) |> round(3),
+  max = sapply(df, max, na.rm = TRUE) |> round(3),
+  sd = sapply(df, sd, na.rm = TRUE) |> round(3),
+  sd.normal = sapply(df, function(x) {
+    x = x[!is.na(x)]
+    sd(x) / (max(x) - min(x))
+  }) |> round(3)
+) |>
+  kable()
+```
+
+Looking at the variance, we see that `MFR` is very low. On the other hand, `Mnf Flow` and `Hyd Pressure3` have relatively high amounts of variance.
+
+### Missing Values (`NA`)
+Let's quantify how much data is missing from our data.
+
+```{r}
+count_missing <- function(data) {
+  data |>
+    summarise(across(everything(), ~ sum(is.na(.)))) |>
+    pivot_longer(
+      everything(),
+      names_to = "variable",
+      values_to = "missing"
+    ) |>
+    filter(missing > 0) |>
+    mutate(
+      ratio = missing / nrow(data)
+    ) |>
+    arrange(desc(missing))
+}
+
+count_missing(train_data) |>
+  kable()
+count_missing(test_data) |>
+  kable()
+```
+
+As we can see, there are a fair number of missing values. PH's four missing values may not be topping the charts; nonetheless, it may be the most problematic. Guidance to handle this scenario is to remove the rows where the PH is null from the training and test sets so that would include removing the rows in the predictor and response sets. We will explain more on this when we get to that step prior to training our model.
+
+### Distribution
+We are temporarily recoding `Brand Code` to be numeric so that we can pivot our dataset to be long. And we have a handle on missing values, so we are filtering them out.
+
+```{r fig.width=8, fig.height=14}
+train_data |>
+  mutate(
+    `Brand Code` = recode(
+      `Brand Code`,
+      "A" = 1,
+      "B" = 2,
+      "C" = 3,
+      "D" = 4
+    )
+  ) |>
+  pivot_longer(
+    cols = everything(),
+    names_to = "variable",
+    values_to = "values"
+  ) |>
+  filter(!is.na(values)) |>
+  ggplot(aes(x = values)) +
+  geom_histogram(bins = 20) +
+  facet_wrap(~ variable, ncol = 4, scales = "free") +
+  labs(
+    title = "Distribution of Data",
+    x = "Values",
+    y = "Count"
+  )
+```
+
+We see a good amount of data with normal distributions. But we also see some that variables that stand out:
+
+- `Bailing`, `Bailing Lvl` and `Density` are bimodal. To a lesser extent, so is `Air Pressurer`.
+- `Filler Speed` is very right skewed, but has a crop of suspicious values at the low end.
+- `Hyd Pressure1`, `Hyd Pressure2`, and `Hyd Pressure3` all have a very large deposit of 0 values. Similarly, `Mnf Flow` has a large deposit of negative values.
+- `Oxygen Filler` is extremely left skewed.
+- `Bowl Setpoint` and `Pressure Setpoint` look as if they are comprised of discrete values.
+
+### One Hot Encoding
+Before we continue exploring, we are going to convert our categorical variable (`Brand Code`) to multiple variables using one hot encoding. We are doing it now because we are about to examine correlation and we want to include `Brand Code` in that study. We will store the results in `train_data_pp`, which will ultimately be our preprocessed training data. We will apply the same transformation to `test_data` so that we can use it for prediction later.
+```{r}
+model <- dummyVars(~ ., data = train_data)
+train_data_pp <- predict(model, newdata = train_data) |>
+  as.data.frame()
+test_data_pp <- predict(model, newdata = test_data) |>
+  as.data.frame()
+```
+
+
+### Correlation
+We are using a correlation matrix to help us better understand the relationships between predictor variables. We are leaving the target (`PH`) in the dataset so that we may learn of predictors with which it has correlation. And so that we don't remove predictors with which it has strong relationships.
+
+```{r fig.width=8, fig.height=8}
+cor_matrix <- cor(train_data_pp, use = "pairwise.complete.obs")
+corrplot::corrplot(cor_matrix, order = "hclust", tl.cex = 0.7)
+```
+
+And let's identify those that we may want to remove because they are highly correlated. We will list variables with $\ge .85$ correlation.
+```{r}
+cor_matrix |>
+  as.data.frame() |>
+  rownames_to_column("variable") |>
+  pivot_longer(
+    -variable,
+    names_to = "correlation",
+    values_to = "value"
+  ) |>
+  mutate(
+    value = round(value, 3),
+    abs_value = abs(value)
+  ) |>
+  filter(
+    variable != correlation & abs_value >= 0.85
+  ) |>
+  arrange(desc(abs_value)) |>
+  kable()
+```
+
+### Linear View
+We saw some weird distributions in our data. And in our summary statistics we saw that some of our variables had a lot of variance. We also saw that some of our variables had a lot of missing values. We are going to take a look at the data in a different way. We are going to plot it as a line plot. But our data is not a time series. Nonetheless, we think that it's safe to assume that the observations were made over time. So, we will try plotting it with a line plot and see what patterns, if any, surface. We would like to emphasize that in no way are we suggesting that this should be interpreted as a time series. We are simply viewing it through the lens of a line plot.
+
+We will use `pivot_longer()` to reshape the data so that we can plot it one variable stacked on top of another. We will also use `row_number()` to create an index for the x-axis. We will use `facet_wrap()` to create a separate plot for each variable.
+```{r fig.width=10, fig.height=50}
+train_data_pp |>
+  mutate(
+    index = row_number()
+  ) |>
+  relocate(
+    index,
+    .before = everything()
+  ) |>
+  pivot_longer(
+    cols = -1,
+    names_to = "variable",
+    values_to = "values"
+  ) |>
+  ggplot(aes(x = index, y = values)) +
+  geom_line() +
+  facet_wrap(~ variable, ncol = 1, scales = "free") +
+  labs(
+    title = "Line Plot of Variables",
+    x = "Index",
+    y = "Values"
+  )
+```
+
+We see a lot of several interesting patterns.
+
+1. We see that `Mnf Flow`, `Hyd Pressure1`, `Hyd Pressure2`, and `Hyd Pressure3` have a lot of consecutive observations with the same value. It is very likely that these are the values we were seeing in our histograms.
+2. `Carb Flow`'s pattern is consistent from 0 to 2000 at which point it drops significantly.
+3. `Carb Pressure1` exhibits what looks like two different modes of operation: 0 to ~1350 and then ~1350 to the end. The "modes" are separated by what appears to be a small gap.
+4. `Oxygen Filler` also appears to have two modes of operation.
+5. `Usage Cont` may be the oddest variable of all of them. It exhibits what looks like a noisy pattern up until ~1600 at which point it radically goes high and stays there in a noisy pattern.
+6. `PH`'s trend line is flat, but it clearly has a daily cycle. Just kidding (though it does almost look like timeseries data).
+
+
+## PCA Study
+
+We employed Principal Component Analysis (PCA) as a dimensionality reduction technique to better understand the structure of the predictor space and to address potential multicollinearity among variables. This will also give us our first glimpse at important predictors and related predictors, and we may recognize these patterns in our models, as well.
+
+Given that the final modeling objective is to predict pH, PCA was applied strictly to the predictor variables (i.e., the input features), with the target variable excluded during the transformation phase.
+
+### Methodology
+
+The PCA was conducted using the caret and tidyverse packages in R. The procedure included the following key steps:
+
+1.  Standardization: Each feature was Yeo-Johnson transformed and center-scaled to unit variance to ensure that PCA was not biased toward features with larger scales.
+
+```{r}
+# Exclude target
+predictors <- train_data_pp |>
+  select(-PH) |>
+  select(where(is.numeric))
+
+# Preprocess: transform and standardize
+predictors_prep <- preProcess(predictors,
+                              method = c("YeoJohnson", "center",
+                                         "scale", "medianImpute"))
+
+# Transform data using PCA
+processed_data <- predict(predictors_prep, predictors)
+```
+
+2.  PCA Transformation: Principal components were extracted from the standardized predictor matrix.
+
+```{r}
+# Perform PCA
+pca_result <- prcomp(processed_data, center = FALSE, scale. = FALSE)
+```
+
+3.  Component Retention: The number of components to retain was informed by a combination of cumulative variance explained and visual inspection via a scree plot.
+
+```{r}
+# Extract the variance explained from the PCA model
+var_explained <- summary(pca_result)$importance[2,]
+
+# Create the scree plot data frame. Need to factor PCs so they populate the
+# plot correctly
+scree_df <- data.frame(
+  PC = factor(paste0("PC", 1:length(var_explained)), levels = paste0("PC", 1:length(var_explained))),
+  Variance = var_explained
+)
+
+# Filter to simplify visualization
+scree_df_small <- scree_df[1:15, ]
+
+# Plot
+ggplot(scree_df_small, aes(x = PC, y = Variance)) +
+  geom_smooth(aes(group = 1), color = "darkblue", linewidth = 1, se = FALSE) +
+  ggtitle("Scree Plot") +
+  xlab("Principal Components") +
+  ylab("Proportion of Variance Explained") +
+  theme_minimal()
+```
+
+### Results and Interpretation
+
+We can analyze the graph above as a heuristic approach for determining the number of Principle Components to keep. The proportion of variance explained starts to taper off at PC6, so we would consider the first five PCs as the most important for modeling. Components beyond this contribute marginally to the variance. Furthermore, we can examine the cumulative variance for each PC we add.
+
+```{r}
+cumulative_variance <- summary(pca_result)$importance[3,]
+
+scree_df$Cumulative_Variance <- cumulative_variance
+
+# Print table
+scree_df |>
+  as_tibble() |>
+  filter(row_number() < 16) |>
+  kable()
+```
+
+From this output, we observe that:
+
+The first few components capture a substantial portion of the total variance.
+
+### Loadings and Interpretability
+
+The rotation matrix provides the loadings of each original variable on the principal components. Loadings close to ±1 indicate strong influence, while values near 0 indicate minimal contribution.
+
+```{r}
+pca_result$rotation[,1:5] |>
+  as.data.frame() |>
+  arrange(desc(abs(PC1)))
+```
+
+By examining the loading structure:
+
+We can interpret PC1 as a linear combination emphasizing variables such as `Alch Rel` `Balling` and `Density`.
+
+Components with clear thematic groupings (e.g., all chemistry variables, or all environmental sensors) enhance interpretability and suggest latent structures in the data.
+
+
+## Preprocessing
+We have discovered much and have some work to do. Some preprocessing we will apply to our training and testing datasets to be used for all regression models. Other preprocessing, such as centering, scaling and PCA will be applied more selectively per model.
+
+- We have a fair amount of correlation.
+- We have `NA`'s in our target variable.
+- We have predictors with varying amounts of missing data.
+- We have a categorical variable.
+- And we have some data that is not `NA`, but looks as if it should be.
+
+First, we have already dealt with our categorical data in `train_data_pp` and `test_data_pp`. We shall use them as a starting place for further preprocessing.
+
+We will deal with our missing `PH` data. We don't want to train our models to predict `NA`. So we are going to drop the four rows missing `PH` values.
+
+```{r}
+train_data_pp <- train_data_pp |>
+  filter(!is.na(`PH`))
+# test_data_pp is already void of PH values
+```
+
+And now we will remove highly correlated variables. We will use a correlation threshold of 0.95. While 0.75 is a common starting point, retaining more features helps maintain signal for models like PLS, which can internally handle correlated predictors by extracting latent factors.
+
+```{r}
+high_corr <- train_data_pp |>
+  select(-PH) |>
+  cor(use = "pairwise.complete.obs") |>
+  findCorrelation(cutoff = 0.95)
+# print the names of the highly correlated variables
+glue("Removing columns: {colnames(train_data_pp)[high_corr]}")
+# remove the highly correlated variables
+train_data_pp <- train_data_pp[, -high_corr]
+test_data_pp <- test_data_pp[, -high_corr]
+```
+
+For missing data we will impute, but the suggested methods of imputation for different models varies, so we are going to leave that processing to be done at training time.
+
+Our line plots revealed some data that is suspiciously constant over many consecutive observations: `Mnf Flow`, `Hyd Pressure1`, `Hyd Pressure2`, and `Hyd Pressure3`. We suspect that they are effectively missing data. Do we want to do any of the following?
+
+1. Leave them as they are.
+2. Remove the variables altogether.
+3. Set the suspicious observations to `NA` and impute them.
+
+We are going to leave them as they are. We don't know enough about the data to feel confident in assuming they are missing data. We are going to assume that they are legitimate values.
+
+```{r eval=FALSE}
+train_data_pp <- train_data_pp |>
+  mutate(
+    # convert the NAs encoded as numbers into proper NAs.
+    `Mnf Flow` = if_else(`Mnf Flow` < 0, NA, `Mnf Flow`),
+    # For those with legitimate 0 values, this is flawed.
+    `Hyd Pressure1` = if_else(`Hyd Pressure1` == 0, NA, `Hyd Pressure1`),
+    `Hyd Pressure2` = if_else(`Hyd Pressure2` == 0, NA, `Hyd Pressure2`),
+    `Hyd Pressure3` = if_else(`Hyd Pressure3` == 0, NA, `Hyd Pressure3`)
+  )
+```
+
+
+## Regression Workshop
+This is our little workshop of utilities. You will see below in `preprocess` that we don't actually partition our data. Our dataset being somewhat small, we have decided to use cross validation to test the performance of our models. We think it is better because it uses different combinations of data to train and test our models. If we partition our training dataset then we are compromising our training and testing in one of two mutually exclusive ways. If we chose to partition it and not use cross validation, then we are training our model with only one snapshot of our data, which could lead to bias. If we chose to partition it and use cross validation, then we are training it with an even smaller dataset. We feel we have everything to gain by not partitioning the data and nothing to lose.
+
+`preprocess()` is a simple utility that sets the random seed in the hopes that all models will use the same cross validated sequence of data. It extracts `y` from `data`, and applies the preprocessing `methods` to the predictors. It returns a list including the preprocessed data, the preprocess model, and the response variable.
+```{r}
+preprocess <- function(data, methods) {
+  set.seed(31415)
+
+  # separate the data into predictors and targets
+  X <- dplyr::select(data, -PH)
+  y <- data$PH
+
+  # preprocess the data
+  model <- preProcess(X, method = methods)
+  X <- predict(model, X)
+  list(
+    PPM = model,
+    X = X,
+    y = y
+  )
+}
+```
+
+`report()` reports accuracy with MAE, RMSE and R2. It also reports the most important variables in descending order.
+```{r}
+report <- function(model) {
+  mae = mean(model$results$MAE)
+  rmse = mean(model$results$RMSE)
+  r2 = mean(model$results$Rsquared)
+  glue("{model$method}: MAE={round(mae, 2)}, RMSE={round(rmse, 2)}, R2={round(r2, 2)}") |>
+    print()
+  glue("Best tuned parameters: {colnames(model$bestTune)} = {model$bestTune}") |>
+    print()
+  print(varImp(model))
+}
+```
+
+`ctrl` is our directive to the training process to use cross validation to train and evaluate our models. Most models will use this control method. Some models will use a less intense cross validation method. For example, Random Forest takes a long time to run with our default parameters. We are cutting down on cross validation for Random Forest to 2 folds and 5 repeats.
+```{r}
+ctrl <- trainControl(method = "repeatedcv", number = 10, repeats = 5)
+```
+
+## Linear Regression
+### Refined Preprocessing
+```{r}
+data <- preprocess(
+  train_data_pp,
+  method = c("knnImpute", "YeoJohnson", "center", "scale")
+)
+```
+
+### Train Partial Least Squares (PLS) Model
+```{r}
+pls_model <- train(
+  x = data$X,
+  y = data$y,
+  method = "pls",
+  tuneLength = 20,
+  trControl = ctrl
+)
+report(pls_model)
+```
+
+
+### Train Ordinary Least Squares (OLS) Model
+Ordinary Least Squares (OLS) is a benchmark linear modeling method. We've already preprocessed the data in a way which suits both PLS and OLS. We'll determine which of these two models is best among linear regression - to do that let's fit an OLS model.
+
+```{r}
+ols_model <- train(
+  x = data$X,
+  y = data$y,
+  method = "lm",
+  trControl = ctrl
+)
+report(ols_model)
+```
+
+OLS is interpretable and useful as a baseline. It assumes linear relationships and independence. It may not perform as well as more complex models if predictors are collinear or relationships are nonlinear.
+
+### Train Lasso Regression Model
+
+To further assess whether regularization improves performance, models like Lasso, Ridge, and Elastic Net could be explored. These approaches can reduce overfitting and handle correlated predictors more effectively than OLS. In future work or production deployment, it would be advisable to test these variants and compare their performance using the same repeated cross-validation framework.
+
+```{r}
+lasso_model <- train(
+  x = data$X,
+  y = data$y,
+  method = "lasso",
+  tuneLength = 20,
+  trControl = ctrl,
+  preProcess = NULL
+)
+report(lasso_model)
+```
+
+### Train Ridge Regression Model
+
+```{r}
+ridge_model <- train(
+  x = data$X,
+  y = data$y,
+  method = "ridge",
+  tuneLength = 20,
+  trControl = ctrl,
+  preProcess = NULL
+)
+report(ridge_model)
+```
+
+
+### Train Elastic Net Model
+```{r}
+elastic_model <- train(
+  x = data$X,
+  y = data$y,
+  method = "glmnet",
+  tuneLength = 20,
+  trControl = ctrl,
+  preProcess = NULL
+)
+report(elastic_model)
+```
+
+We see a warning after running the model for Elastic net that there were missing values in resampled performance measures. Since our model finished training and we still got valid results, and as we will see below our metrics for Elastic Net are close to the others, we will likely not recommend selecting it as our final model unless it offers clear advantages (which we will see that it does not.)
+
+### Comparison of OLS, PLS, and Lasso
+
+After training and comparing five linear modeling approaches — OLS, PLS, Lasso, Ridge, and Elastic Net — we find that performance across all methods is remarkably similar. Each model was evaluated using repeated 10-fold cross-validation, and results were compared using RMSE (Root Mean Squared Error), R-squared, and MAE (Mean Absolute Error).
+
+The **best RMSE** and **best R-squared** values were achieved by **OLS** and **Elastic Net**, but the differences between all models are minuscule (less than 0.0001 RMSE units). The **lowest MAE** was from OLS at 0.104241, but again, the margin is extremely small.
+
+Given the similarity in performance, we recommend **Ordinary Least Squares (OLS)** for this use case:
+
+- It is simple, interpretable, and fast to compute.
+- It slightly outperformed PLS and Lasso in both MAE and RMSE.
+- Its coefficients can be used directly for business insight and explainability.
+
+Elastic Net showed nearly identical performance but triggered a convergence warning during resampling, suggesting mild instability. If regularization becomes important due to changing data conditions or overfitting concerns in future phases, Lasso or Elastic Net could be revisited.
+
+This modeling exercise confirms that pH can be predicted with consistent accuracy using standard linear models. The choice of model does not significantly alter accuracy, allowing the business to prioritize simplicity and transparency. Implementing the OLS model enables stakeholders to:
+
+- Understand which production variables most influence pH
+- Monitor predictions in real time using a straightforward model
+- Translate coefficients into actionable guidance for technicians
+
+
+## Non Linear Regression
+### Refined Preprocessing
+```{r}
+data <- preprocess(train_data_pp, c("center", "scale", "medianImpute", "pca"))
+```
+
+### KNN Model
+k-Nearest Neighbors is a non-parametric method used for classification and regression. It works by finding the k-nearest neighbors to a given point and using their values to predict the value of that point.
+
+```{r}
+knn_model <- train(
+  x = data$X,
+  y = data$y,
+  method = "knn",
+  tuneLength = 20,
+  trControl = ctrl
+)
+report(knn_model)
+```
+
+### SVM Model
+Support Vector Machines (SVM) is a supervised learning algorithm that can be used for classification or regression. It works by finding the hyperplane that best separates the data into different classes. In this case, we are using it for regression and will try three different SVM models: linear, polynomial, and radial.
+
+
+#### Linear SVM Model
+```{r}
+svml_model <- train(
+  x = data$X,
+  y = data$y,
+  method = "svmLinear",
+  tuneLength = 10,
+  trControl = ctrl
+)
+report(svml_model)
+```
+
+#### Polynomial SVM Model
+```{r}
+svmp_model <- train(
+  x = data$X,
+  y = data$y,
+  method = "svmPoly",
+  tuneLength = 3,
+  trControl = trainControl(
+    method = "repeatedcv",
+    number = 2,
+    repeats = 5
+  )
+)
+report(svmp_model)
+```
+
+#### Radial SVM Model
+```{r}
+svmr_model <- train(
+  x = data$X,
+  y = data$y,
+  method = "svmRadial",
+  tuneLength = 5,
+  trControl = ctrl
+)
+report(svmr_model)
+```
+
+### MARS Model
+Multivariate Adaptive Regression Splines (MARS) is a non-parametric regression technique that can be used for both linear and non-linear regression. It works by fitting piece-wise linear functions to the data.
+
+We are using a less intensive cross validation method for MARS because it takes a long time to run with our default parameters. We are cutting down on cross validation to 2 folds and 5 repeats.
+
+```{r}
+grid = expand.grid(
+  degree = 1:2,
+  nprune = 5:10
+)
+mars_model <- train(
+  x = data$X,
+  y = data$y,
+  method = "earth",
+  tuneGrid = grid,
+  trControl = trainControl(
+    method = "repeatedcv",
+    number = 2,
+    repeats = 5
+  )
+)
+report(mars_model)
+```
+
+
+### Neural Network Model
+Neural Networks are a class of models that are inspired by the way the human brain works. They are used for both classification and regression tasks. In this case, we are using it for regression.
+
+As with MARS, we are using a less intensive cross validation method for Neural Networks because it takes a long time to run with our default parameters. We are cutting down on cross validation to 2 folds and 5 repeats.
+
+```{r}
+grid <- expand.grid(
+  size = c(2, 4, 6, 8, 10),
+  decay = c(0, 0.05, 0.1, 0.15)
+)
+nn_model <- train(
+  x = data$X,
+  y = data$y,
+  method = "nnet",
+  linout = TRUE,
+  trace = FALSE,
+  maxit = 1000,
+  tuneGrid = grid,
+  trControl = trainControl(
+    method = "repeatedcv",
+    number = 2,
+    repeats = 5
+  )
+)
+report(nn_model)
+```
+
+### Non Linear Summary
+Of the non-linear models, the SVM radial model performed best with an R-squared of 0.485, followed closely by KNN with an R-squared of 0.455. Somewhat surprisingly, the MARS model had the lowest R-squared of the non linear bunch of 0.302, while the Neural Network model had an R-squared of 0.384.
+
+And the MAE and RMSE, for the most part, reinforce R-squared's story. The non-linear champion, SVM radial model, had the lowest MAE of 0.093 and lowest RMSE of 0.125. While, at the other extreme, MARS had the highest MAE of 0.114 and 2nd highest RMSE of 0.144.
+
+## Decision Trees
+### Refined Preprocessing
+```{r}
+rpart_data <- preprocess(train_data_pp, "medianImpute")
+# column names with backticks are causing issues with the caret package.
+rpart_data$X <- clean_names(rpart_data$X)
+```
+
+### Recursive Partitioning Model
+```{r}
+rpart_model <- train(
+  x = rpart_data$X,
+  y = rpart_data$y,
+  method = "rpart",
+  tuneLength = 10,
+  trControl = ctrl
+)
+report(rpart_model)
+```
+
+Visualize the model
+```{r}
+rpart.plot(
+  rpart_model$finalModel,
+  type = 2,
+  extra = 101,
+  fallen.leaves = TRUE,
+  main = "Decision Tree for pH Prediction"
+)
+
+```
+
+The recursive partitioning model was built using the rpart method with 10 levels of complexity parameter (cp) tuning. The optimal cp value found was 0.0136, balancing tree complexity and performance. While the decision tree offers good interpretability, its predictive power was moderate, with an Rsquared of 0.34 indicating only limited explanatory capability for the variance in the response variable. The visualization of the decision tree helps understand how key variables influence the pH prediction.
+
+The top three predictors identified were:
+mnf_flow (100% importance), brand_code_c (92.93) and pressure_vacuum (88.75).
+
+### Random Forest Model
+```{r}
+rf_data <- rpart_data
+
+# Random forest takes a very long time to run with our default parameters.
+# We are cutting down on cross validation
+rf_model <- train(
+  x = rf_data$X,
+  y = rf_data$y,
+  importance = TRUE,
+  trControl = trainControl(
+    method = "repeatedcv",
+    number = 2,
+    repeats = 5
+  )
+)
+report(rf_model)
+```
+
+Visualize the model
+```{r fig.width=8, fig.height=9}
+varImpPlot(
+  rf_model$finalModel,
+  type = 1,
+   main = "Random Forest Variable Importance"
+)
+```
+
+The Random Forest outperformed the decision tree, nearly doubling the explanatory power (Rsquared of 0.63). It provided much stronger predictive performance, suggesting it is better suited for this dataset despite longer training time and reduced interpretability.
+
+Top predictors included:
+mnf_flow (100% importance), consistent with the decision tree.
+
+## Model Comparison
+Having used cross-validation to build our models, they are now populated with $results$.  Here we shall take a look at some of those summary statistics and compare one model to another.
+
+```{r}
+model_list <- list(
+  PLS = pls_model,
+  OLS = ols_model,
+  Lasso = lasso_model,
+  Ridge = ridge_model,
+  ElasticNet = elastic_model,
+  KNN = knn_model,
+  SVM_linear = svml_model,
+  SVM_poly = svmp_model,
+  SVM_radial = svmr_model,
+  MARS = mars_model,
+  NeuralNet = nn_model,
+  RPart = rpart_model,
+  RandomForest = rf_model
+)
+
+# extract the results from each model
+model_results <- tibble(
+  Model = names(model_list),
+  MAE = map(
+    model_list, function(x) mean(x$results$MAE, na.rm = TRUE)
+  ) |> as_vector(),
+  RMSE = map(
+    model_list, function(x) mean(x$results$RMSE, na.rm = TRUE)
+  ) |> as_vector(),
+  Rsquared = map(
+    model_list, function(x) mean(x$results$Rsquared, na.rm = TRUE)
+  ) |> as_vector()
+)
+```
+
+```{r}
+model_results |>
+  arrange(desc(Rsquared), MAE, RMSE) |>
+  mutate(
+    MAE = round(MAE, 3),
+    RMSE = round(RMSE, 3),
+    Rsquared = round(Rsquared, 3)
+  ) |>
+  kable()
+```
+
+## The Champion
+A champion, ideally, is a model with the lowest MAE, the lowest RMSE, and the highest R2. And we have such a champion. Please allow us to present the champion of our modeling competition: Random Forest. It is simple, moderately interpretable, but not very fast to compute.
+
+Among all tested models, the Random Forest model did demonstrate the best overall performance, achieving the lowest MAE (0.080), lowest RMSE (0.108), and highest r squared (0.626), indicating superior predictive accuracy and explanatory power.
+
+The SVM radial and KNN models followed, with moderate performance (r squared of 0.485 and 0.455, respectively), but did not match the precision of Random Forest. Linear models such as OLS, Ridge, and Elastic Net showed similar results, with r squared values clustered around 0.37–0.40.
+
+The Neural Network, PLS, Lasso, and RPart (Decision Tree) models exhibited slightly weaker performance, with r squared values below 0.40. The MARS model had the lowest performance overall (r squared of 0.302).
+
+In conclusion, Random Forest is the recommended model for this dataset due to its balance of accuracy and robustness, despite being more complex and computationally intensive.
+
+## Final Predictions
+Finally, we will make predictions using our champion model, Random Forest. We will use the test data to make predictions and save them to a CSV file.
+```{r}
+# preprocess the data with the same model with which we preprocessed the training model
+df <- predict(rf_data$PPM, test_data_pp)
+# the variable names in our training set caused problems with `randomForest` so we
+# "cleaned" them. The model is expecting the same variables.
+df <- clean_names(df)
+data.frame(
+  SampleID = 1:nrow(df),
+  Predicted_pH = predict(rf_model, newdata = df)
+) |>
+  write.csv(
+    "Final_Predictions.csv",
+    row.names = FALSE
+  )
+```

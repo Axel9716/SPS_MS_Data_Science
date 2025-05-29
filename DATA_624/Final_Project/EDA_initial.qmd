@@ -1,0 +1,375 @@
+---
+title: "Final Project EDA"
+author: "AP"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+Notes
+
+1. Lots of missing values, will have to determine how to deal with them.
+
+2. Some predictors are numeric but might not be continuous because they have few unique values. Also try nearzerovar function. 
+
+3. Several predictors have collinearity. Need to consider feature extraction or robust modeling method.
+
+4. Ph is nearly normally distributed, but many of the predictor distributions are wonky. Need to consider center-scaling and/or transforming certain data or using a robust model.
+
+5. Would be nice to get more context or a guideline on what to put in the technical vs non-technical reports. Maybe we can ask professor for this in class Tuesday. Hopefully he can at least send a link to some academic standards for these types of reports
+
+6. hyd_pressure1 has near-zero variance, because ratio of highest freq value to the lowest is  > 20x. The highest freq value is 0 -- likely an NA replacement. Consider removing.
+
+7. Potential step 1 to attempt to describe, categorize, and group together all predictors.
+
+8. Overall need to consider heavy handling of predictors and/or robust modelling
+
+
+```{r}
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(ggpubr)
+library(GGally)
+```
+
+```{r}
+training_data <- read_excel("StudentData.xlsx") |> clean_names()
+
+test_data <- read_excel("StudentEvaluation.xlsx") |> clean_names()
+```
+
+Everything is doubles (including ph) except brand_code, which is values A to D and 120 (~5%) NA values. 
+
+```{r}
+glimpse(training_data)
+
+training_data |> count(brand_code)
+```
+
+3 other variables have less 20 unique values
+  - All look continuous, but over short ranges. Also look rounded to dividends of 0.2 or 2.
+
+```{r}
+training_data |> 
+  summarise(across(everything(), \(x) n_distinct(x) >= 20)) |> 
+  pivot_longer(everything(), names_to = "variable", values_to = "is_continuous") |> 
+  filter(is_continuous == FALSE)
+
+training_data |> 
+  count(pressure_vacuum)
+
+training_data |> 
+  count(bowl_setpoint)
+
+training_data |> 
+  count(pressure_setpoint)
+
+training_data |> 
+  count(hyd_pressure1, sort = TRUE)
+```
+
+```{r}
+nearZeroVar(training_data, names = TRUE)
+```
+
+
+
+```{r}
+
+# Splitting up predictors will help us load the distribution plots more cleanly
+vars1 <- training_data |> select(1:11)
+vars2 <- training_data |> select(12:22)
+vars3 <- training_data |> select(23:33)
+
+
+# Use purrr::map to visualize distributions for all predictors
+var_distributions1 <- map(names(vars1), ~ {
+  ggplot(vars1, aes(x = .data[[.x]])) +
+    geom_bar()})
+
+var_distributions2 <- map(names(vars2), ~ {
+  ggplot(vars2, aes(x = .data[[.x]])) +
+    geom_bar()})
+
+var_distributions3 <- map(names(vars3), ~ {
+  ggplot(vars3, aes(x = .data[[.x]])) +
+    geom_bar()})
+```
+
+```{r echo=FALSE}
+ggarrange(plotlist = var_distributions1)
+ggarrange(plotlist = var_distributions2)
+ggarrange(plotlist = var_distributions3)
+```
+
+
+```{r}
+var1_vs_outcome <- imap(vars1, ~ {
+  ph <- training_data$ph
+  ggplot(vars1, aes(x = .x, y = ph)) +
+    geom_point() +
+    labs(y = NULL, x = .y)})
+
+ggarrange(plotlist = var1_vs_outcome)
+```
+
+```{r}
+var2_vs_outcome <- imap(vars2, ~ {
+  ph <- training_data$ph
+  ggplot(vars2, aes(x = .x, y = ph)) +
+    geom_point() +
+    labs(y = NULL, x = .y)})
+
+ggarrange(plotlist = var2_vs_outcome)
+```
+
+
+```{r}
+vars3b <- vars3 |> select(-ph)
+
+var3_vs_outcome <- imap(vars3b, ~ {
+  ph <- training_data$ph
+  ggplot(vars3b, aes(x = .x, y = ph)) +
+    geom_point() +
+    labs(y = NULL, x = .y)})
+
+ggarrange(plotlist = var3_vs_outcome)
+
+```
+
+
+```{r}
+ggpairs(vars1 |> mutate(ph = training_data$ph))
+ggpairs(vars1 |> mutate(ph = training_data$ph))
+ggpairs(vars1 |> mutate(ph = training_data$ph))
+```
+
+```{r}
+cor_mat <- cor(training_data |> select(-brand_code) |> drop_na())
+
+cor_mat |> as.data.frame() |> 
+  filter(if_any(everything(), \(x) abs(x) > 0.5)) |> 
+  view()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

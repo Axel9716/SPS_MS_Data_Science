@@ -1,0 +1,93 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(tsibble)
+```
+
+
+```{r}
+raw_data <- read_csv("Air_Quality.csv") |> clean_names()
+
+glimpse(raw_data)
+
+raw_data |> 
+  count(category)
+  print(n=25)
+  
+  
+  
+storm_data <- read_csv("StormEvents_details-ftp_v1.0_d2011_c20250401.csv") |> clean_names()
+
+storm_data |> 
+  count(begin_yearmonth)
+
+
+```
+
+
+```{r}
+fit_data <- read_csv("Nutrition__Physical_Activity__and_Obesity_-_Behavioral_Risk_Factor_Surveillance_System.csv")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
