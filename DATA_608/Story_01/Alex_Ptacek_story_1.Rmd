@@ -1,7 +1,6 @@
 ---
 title: "Story 1 - IIJA Funding Distrubtion Relative to Population and Politics"
 author: "Alex Ptacek"
-date: "2025-09-10"
 output: html_document
 ---
 
@@ -46,7 +45,7 @@ election_data <- read_html("https://en.wikipedia.org/wiki/2020_United_States_pre
 
 election_data <- election_data[[1]] |>  
   as_tibble(.name_repair = "minimal") |> 
-  select(state = 1, biden = 2, biden2 = 3, trump = 5)
+  select(state = 1, biden = 2, biden_perc = 3, trump = 5)
 ```
 
 </details>
@@ -91,8 +90,8 @@ data <- data |>
                                             6605593, census_population_8_9_a_2),
          biden = str_remove_all(biden, ","),
          biden = as.numeric(biden),
-         biden2 = str_remove_all(biden2, "[%]"),
-         biden2 = as.numeric(biden2),
+         biden_perc = str_remove_all(biden_perc, "[%]"),
+         biden_perc = as.numeric(biden_perc),
          trump = str_remove_all(trump, ","),
          trump = as.numeric(trump))
 ```
@@ -115,80 +114,33 @@ viz1_data |>
   scale_x_continuous(n.breaks = 10,
                      labels = scales::percent) +
   geom_vline(xintercept = 2, lty = 2, color = "orange4", linewidth = 1) +
-  labs(title = "IIJA Funding for U.S States and Territories Relative to thier Total Population Percentage",
+  labs(title = "IIJA Funding for U.S States and Territories Relative to their Total Population Percentage",
        subtitle = "Almost a quarter of states and territories received IIJA funding greater than 2x than their population percentage.",
        y = "",
        x = "")
 ```
 
+# Visualization 2
 
-```{r fig.height=8, fig.width=10}
+```{r fig.width=10, fig.height=5}
 viz2_data <- data |> 
-  drop_na(biden) |> 
+  drop_na(biden, biden_perc, trump) |> 
   mutate(fund_perc = total_billions/sum(total_billions),
-         pop_perc = biden/ sum(biden),
-         perc_diff = biden2/fund_perc,
-         fill_col = ifelse(biden > trump, "blue", "red"))
+         biden_perc = biden_perc/100)
 
 viz2_data |> 
-  ggplot(aes(x = perc_diff,
-             y = reorder(state_teritory_or_tribal_nation, abs(perc_diff)))) +
-  geom_col(fill = viz2_data$fill_col) +
-  theme_minimal() +
-  scale_x_continuous(n.breaks = 11,
+  ggplot(aes(x = biden_perc, y = fund_perc)) +
+  geom_step(color = ifelse(viz2_data$biden_perc > .5, "blue", "red")) +
+  geom_vline(xintercept = .5, lty = 2, color = "grey") +
+  scale_x_continuous(limits = c(.25, 1),
+                     n.breaks = 4,
                      labels = scales::percent) +
-  labs(title = "IIJA Funding for U.S States and Territories Relative to thier Total Population Percentage",
-       subtitle = "Almost a quarter of states and territories received IIJA funding greater than 2x than their population percentage.",
-       y = "",
-       x = "Actual vs. Expected Funding")
+  scale_y_continuous(labels = scales::percent) +
+  theme_minimal() +
+  labs(title = "IIJA Funding Compared with Biden Voter Turnout by State",
+       subtitle = "Higher percentages of voting in favor of Biden did not result in noticeably greater proportions of funding from IIJA.",
+       x = "% Votes for Biden",
+       y = "% Funding from IIJA")
 ```
-
-
-```{r}
-viz2_data |> 
-  ggplot(aes(x = biden2, y = fund_perc)) +
-  geom_point(color = viz2_data$fill_col) +
-  geom_text(label = viz2_data$state_teritory_or_tribal_nation, size = 2) +
-  theme_minimal()
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
