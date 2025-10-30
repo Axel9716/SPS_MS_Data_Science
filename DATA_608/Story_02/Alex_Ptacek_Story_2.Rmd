@@ -1,0 +1,262 @@
+---
+title: "Story 2"
+author: "Alex Ptacek"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Notes for tomorrow:
+
+first viz in viz section will be viz 2. viz
+viz 1 will be something super simple
+check last code chunk for viz 3. something is there.
+
+# Load Packages
+
+```{r message=FALSE}
+library(tidyverse)
+library(readxl)
+library(ggpubr)
+```
+
+# Load/Tidy Data
+
+1. Consumer Price Index (CPI) Annual Average (2000 - 2024)
+
+Source: Bureau of Labor Statistics (BLS) (https://data.bls.gov/toppicks?survey=bls)
+Note: Base period for index = 100 is 1982 - 1984
+
+```{r message=FALSE}
+cpi <- read_excel("historical_CPI_1995-2025.xlsx", skip = 11) |> 
+  filter(Year >= 2000 & Year <= 2024) |> 
+  select(Year, cpi = Annual)
+```
+
+
+2. Unemployment Rate Annual Average (2000 - 2024)
+
+Source: Bureau of Labor Statistics (BLS) (https://data.bls.gov/toppicks?survey=bls)
+Note: Yearly averages were derived mathematically, because they were not provided by BLS.
+
+
+```{r message=FALSE}
+# Unemployment rate by month from BLS
+unemp_rate <- read_excel("unemployment_rate_1995-2025.xlsx") |> 
+  mutate(across(Jan:Dec, \(x) x/100))
+
+# Total unemployed people by month from BLS
+unemp_ppl <- read_excel("unemployment_total_1995-2025.xlsx", skip = 11) |> 
+  mutate(across(Jan:Dec, \(x) x*1e3))
+
+# Apply matrix division to derive total population
+total_ppl <- unemp_ppl[-1] / unemp_rate[-1]
+
+# Calculate average total population for each year
+total_ppl <- cbind(Year = unemp_rate$Year, total_ppl) |> 
+  mutate(yearly_total_ppl = rowMeans(across(Jan:Dec)))
+
+# Calculate average unemployed people for each year
+unemp_ppl <- unemp_ppl |> 
+  mutate(yearly_total_unemp = rowMeans(across(Jan:Dec)))
+
+# Calculate average yearly unemployment rate
+unemp_rate <- tibble(Year = total_ppl$Year,
+               total_ppl = total_ppl$yearly_total_ppl,
+               unemp_ppl = unemp_ppl$yearly_total_unemp) |> 
+  mutate(unemployment_rate = unemp_ppl/total_ppl) |> 
+  select(Year, unemployment_rate) |> 
+  filter(Year >= 2000 & Year <= 2024)
+  
+```
+
+
+3. Federal Funds Effective Rate Annual Average (2000 - 2024)
+
+*Source: Federal Reserve Economic Data (FRED),*
+        *Federal Reserve Bank of St. Louis (https://fred.stlouisfed.org/series/FEDFUNDS)*
+
+```{r message=FALSE}
+fed_funds_rate <- read_csv("FEDFUNDS_2000-2024.csv")
+
+fed_funds_rate <- fed_funds_rate |> 
+  mutate(Year = year(observation_date)) |> 
+  group_by(Year) |> 
+  summarize(fed_rate = mean(FEDFUNDS)/100)
+```
+
+
+**4. Combine Data**
+
+```{r message=FALSE}
+data <- cpi |> 
+  left_join(fed_funds_rate) |> 
+  left_join(unemp_rate)
+
+write_csv(data, "data.csv")
+data <- read.csv("data.csv")
+
+head(data)
+```
+
+
+# Visualizations
+
+```{r}
+data2 <- data |> 
+  mutate(cpi_yoy_delta = cpi/lag(cpi, 1) - 1,
+         fed_yoy_delta = fed_rate/lag(fed_rate, 1) - 1,
+         unemp_yoy_delta = unemployment_rate/lag(unemployment_rate) - 1,
+         
+         cpi_sig_positive = ifelse(cpi_yoy_delta > .05, "yes", "no"),
+         fed_sig_positive = ifelse(fed_yoy_delta > .05, "yes", "no"),
+         unemp_sig_positive = ifelse(unemp_yoy_delta > .05, "yes", "no"),
+         
+         cpi_sig_negative = ifelse(cpi_yoy_delta < -.05, "yes", "no"),
+         fed_sig_negative = ifelse(fed_yoy_delta < -.05, "yes", "no"),
+         unemp_sig_negative = ifelse(unemp_yoy_delta < -.05, "yes", "no"))
+
+
+
+n_positive_changes <- data2 |> 
+  pivot_longer(cols = cpi_sig_positive:unemp_sig_positive, names_to = "variable",
+               values_to = "positive") |> 
+  filter(positive == "yes") |>    
+  ggplot(aes(x = variable)) +
+  geom_bar(aes(fill = case_when(variable == "fed_sig_positive" ~ "cornflowerblue",
+                                variable == "unemp_sig_positive" ~ "salmon",
+                                .default = "grey"))) +
+  scale_fill_identity() +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -.5, size = 5) +
+  theme_minimal() +
+  scale_x_discrete(labels = c("CPI", "Fed Rate", "Unemployment Rate")) +
+  ylim(0,14) +
+  theme(axis.text.y = element_blank(),
+        axis.title.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(y = "Positive",
+       title = "Year-over-Year Changes Greater than 5% (2000 - 2024).",
+       subtitle = "The Fed Rate and Unemployment Rate have had significant variance most years in this period, while CPI only had one year (2022) with a delta over 5%.")
+
+
+
+n_negative_changes <- data2 |> 
+  pivot_longer(cols = cpi_sig_negative:unemp_sig_negative, names_to = "variable",
+               values_to = "negative") |> 
+  filter(negative == "yes") |>
+  count(variable, name = "count") |> 
+  complete(variable = c("cpi_sig_negative", "fed_sig_negative", "unemp_sig_negative"), 
+           fill = list(count = 0)) |> 
+  ggplot(aes(x = variable, y = -count)) + 
+  geom_col(aes(fill = case_when(variable == "fed_sig_negative" ~ "cornflowerblue",
+                                variable == "unemp_sig_negative" ~ "salmon",
+                                .default = "grey"))) +
+  scale_fill_identity() +
+  geom_text(aes(label = abs(count)), vjust = 1.5, size = 5) + 
+  theme_minimal() +
+  scale_x_discrete(labels = c("CPI", "Fed Rate", "Unemployment Rate")) +
+  scale_y_continuous(labels = abs, limits = c(-17, 0)) +
+  theme(axis.text.y = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank()) +
+  labs(y = "Negative")
+
+ggarrange(n_positive_changes, n_negative_changes, nrow = 2)
+```
+
+
+```{r}
+data |>
+  mutate(across(fed_rate:unemployment_rate, \(x) x*1e4)) |>
+  pivot_longer(cols = cpi:unemployment_rate, 
+               names_to = "variable", values_to = "value") |>
+  ggplot(aes(x = Year, y = value, color = variable)) +
+  geom_line(size = 2) +
+  scale_color_manual(
+    values = c("cpi" = "grey", "fed_rate" = "cornflowerblue", "unemployment_rate" = "tomato"),
+    labels = c("cpi" = "CPI", "fed_rate" = "Federal Reserve Rate", "unemployment_rate" = "Unemployment Rate"),
+    guide = guide_legend(title = NULL)) +
+  theme_minimal() +
+  theme(axis.title.y = element_blank(),
+        axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) +
+  scale_x_continuous(limits = c(2000, 2024),
+                     breaks = seq(2000, 2024, length.out = 7),
+                     minor_breaks = NULL) +
+  scale_y_continuous(minor_breaks = NULL) +
+  labs(title = "Trendlines for Macroeconomic Indicators (2000 - 2024).",
+       subtitle = "The Fed Rate and Unemployment Rate trendlines are nearly symmetrical, while CPI has
+remained on a steady upward trend, suggesting that the Fed has responded more aggresively to Unemployment.",
+       
+       caption = "*Rates have been scaled up by 1,000 in order to observe trends alongside CPI.")
+```
+
+
+```{r}
+data2 <- data |> 
+  mutate(cpi_yoy_delta = cpi/lag(cpi, 1) - 1,
+         fed_yoy_delta = fed_rate/lag(fed_rate, 1) - 1,
+         unemp_yoy_delta = unemployment_rate/lag(unemployment_rate) - 1,
+         test = fed_rate > cpi_yoy_delta)
+
+data2 |> 
+  pivot_longer(cols = c(fed_rate, cpi_yoy_delta),
+               names_to = "variable", values_to = "value") |> 
+  filter(Year != 2022) |> 
+  ggplot(aes(x = Year, y = value, color = variable)) +
+  geom_line() +
+  theme_minimal()
+
+data2 |> 
+  pivot_longer(cols = fed_yoy_delta:unemp_yoy_delta,
+               names_to = "variable", values_to = "value") |> 
+  filter(Year != 2022) |> 
+  ggplot(aes(x = Year, y = value, color = variable)) +
+  geom_line() +
+  theme_minimal()
+
+
+data2 |> 
+  ggplot(aes(x = Year, y = cpi_yoy_delta)) +
+  geom_line()
+
+data2 |> 
+  ggplot(aes(x = Year)) +
+  geom_line(aes(y = cpi_yoy_delta, color = "cpi")) +
+  geom_line(aes(y = fed_rate))
+
+data2 |> 
+  ggplot(aes( x = cpi_yoy_delta, y = fed_rate, color = test)) +
+  geom_point() +
+  scale_y_continuous(limits = c(0, 0.08)) +
+  geom_abline(aes(intercept = 0, slope = 1))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
